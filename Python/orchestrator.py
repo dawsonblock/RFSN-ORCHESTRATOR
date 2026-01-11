@@ -34,6 +34,9 @@ from prometheus_metrics import router as metrics_router, registry, inc_requests,
 from hot_config import init_config, get_config
 from xvasynth_engine import XVASynthEngine
 
+# Import learning layer
+from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog
+
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 MEMORY_DIR = Path(__file__).parent.parent / "memory"
@@ -96,6 +99,11 @@ active_ws: List[WebSocket] = []
 conversation_managers: Dict[str, ConversationManager] = {}
 conversation_managers_lock = asyncio.Lock()
 
+# Learning layer instances
+policy_adapter: Optional[PolicyAdapter] = None
+reward_model: Optional[RewardModel] = None
+trainer: Optional[Trainer] = None
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -148,6 +156,13 @@ async def startup_event():
     from security import api_key_manager
     api_key_manager.keys_file = str(API_KEYS_PATH)
     api_key_manager._load_keys()
+    
+    # Initialize learning layer
+    global policy_adapter, reward_model, trainer
+    policy_adapter = PolicyAdapter(epsilon=0.08)
+    reward_model = RewardModel()
+    trainer = Trainer(learning_rate=0.05, decay_rate=0.9999)
+    logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer)")
 
     # Generate initial API Key if missing
     if not API_KEYS_PATH.exists():
@@ -262,9 +277,42 @@ async def stream_dialogue(request: DialogueRequest):
             conversation_managers[npc_name] = ConversationManager(npc_name, str(MEMORY_DIR))
         memory = conversation_managers[npc_name]
     
-    # Build prompt with context compression if needed
+    # CALL SITE A: Choose action mode before prompt assembly (Learning Layer)
+    action_mode = ActionMode.TERSE_DIRECT  # Default
+    features = None
+    if policy_adapter:
+        try:
+            # Build features from current state
+            rfsn_state = {
+                "npc_name": npc_name,
+                "affinity": state.affinity,
+                "mood": state.mood,
+                "relationship": state.relationship,
+                "playstyle": "balanced",  # Could extract from player data
+                "recent_sentiment": 0.0  # Could compute from recent turns
+            }
+            retrieval_stats = {
+                "top_k_scores": [],  # Could add if using retrieval
+                "contradiction_detected": False
+            }
+            convo_stats = {
+                "turn_count": len(memory.get_context_window(limit=100).split("\n")) if config_watcher.get("memory_enabled") else 0
+            }
+            
+            features = policy_adapter.build_features(rfsn_state, retrieval_stats, convo_stats)
+            action_mode = policy_adapter.choose_action_mode(features)
+            logger.info(f"Learning: Selected action mode {action_mode.name}")
+        except Exception as e:
+            logger.error(f"Learning layer error (feature extraction): {e}")
+    
+    # Build prompt with context compression and action mode injection
     history = memory.get_context_window(limit=config_watcher.get("context_limit", 4)) if config_watcher.get("memory_enabled") else ""
     system_prompt = f"You are {state.npc_name}. {state.get_attitude_instruction()} Keep it short (1-2 sentences)."
+    
+    # Inject action mode control block
+    if policy_adapter:
+        system_prompt += f"\n\n{action_mode.prompt_injection}"
+    
     full_prompt = f"System: {system_prompt}\n{history}\nPlayer: {request.user_input}\n{state.npc_name}:"
     
     # Snapshot configuration per request (Patch 4) prevents mid-stream tuning weirdness
@@ -313,6 +361,38 @@ async def stream_dialogue(request: DialogueRequest):
         total_dur = (time.time() - start_time) * 1000
         observe_request_duration(total_dur / 1000.0)
         await broadcast_metrics(streaming_engine.voice.metrics)
+        
+        # CALL SITE B: Compute reward and update policy (Learning Layer)
+        if policy_adapter and features and trainer:
+            try:
+                # Detect reward signals
+                signals = RewardSignals(
+                    contradiction_detected=False,  # Could integrate with retrieval
+                    user_correction=False,  # Will be detected on next turn
+                    tts_overrun=(streaming_engine.voice.metrics.dropped_sentences > 0),
+                    conversation_continued=True,  # Assume continued if we got here
+                    follow_up_question=False  # Could detect from user_input
+                )
+                
+                # Compute reward
+                reward = reward_model.compute(signals)
+                
+                # Update policy weights
+                policy_adapter.weights = trainer.update(
+                    policy_adapter.weights, features, action_mode, reward
+                )
+                
+                # Log turn
+                turn_log = TurnLog.create(npc_name, features, action_mode, reward, signals)
+                trainer.log_turn(turn_log)
+                
+                # Save weights periodically
+                if trainer.update_count % 10 == 0:
+                    policy_adapter.save_weights()
+                
+                logger.info(f"Learning: reward={reward:.2f}, mode={action_mode.name}")
+            except Exception as e:
+                logger.error(f"Learning layer error (reward/update): {e}")
         
         # Per-request Trace Log (Patch v8.9)
         trace_id = f"req_{int(start_time)}"
