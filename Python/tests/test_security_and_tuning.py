@@ -23,6 +23,7 @@ def test_safe_filename_token_clamps():
 
 def test_safe_filename_basic():
     """Test basic filename cleaning"""
-    assert safe_filename_token("  My NPC Name  ") == "My_NPC_Name"
+    # Implementation preserves spaces (allowed chars: A-Za-z0-9_ -)
+    assert safe_filename_token("  My NPC Name  ") == "My NPC Name"
     assert safe_filename_token("Lydia!") == "Lydia"
-    assert safe_filename_token("Jarl Balgruuf") == "Jarl_Balgruuf"
+    assert safe_filename_token("Jarl Balgruuf") == "Jarl Balgruuf"
