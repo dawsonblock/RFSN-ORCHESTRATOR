@@ -281,7 +281,6 @@ async def stream_dialogue(request: DialogueRequest):
         try:
             # Use snapshot values
             for chunk in streaming_engine.generate_streaming(full_prompt, max_tokens=snapshot_max_tokens, temperature=snapshot_temp):
-                clean_text = _cleanup_tokens(chunk.text)
                 
                 if not first_chunk_sent:
                     first_chunk_sent = True
@@ -289,25 +288,41 @@ async def stream_dialogue(request: DialogueRequest):
                     observe_first_token(latency)
                     logger.info(f"First token: {latency*1000:.0f}ms")
                 
-                yield f"data: {json.dumps({'sentence': clean_text, 'is_final': chunk.is_final, 'latency_ms': chunk.latency_ms})}\n\n"
-                full_response += clean_text
+                # Stream Raw Text to SSE (Patch v8.9) - cleanup is for TTS only
+                yield f"data: {json.dumps({'sentence': chunk.text, 'is_final': chunk.is_final, 'latency_ms': chunk.latency_ms})}\n\n"
+                full_response += chunk.text # Raw accumulator for memory
                 
                 # Token metrics
-                inc_tokens(len(clean_text.split())) # Rough estimate
+                inc_tokens(len(chunk.text.split())) # Rough estimate
                 
                 if chunk.is_final and config_watcher.get("memory_enabled"):
                     memory.add_turn(request.user_input, full_response)
                     # Process emotion on final full response
                     emotion_info = multi_manager.process_response(npc_name, full_response)
                     logger.info(f"NPC {npc_name} emotion: {emotion_info['emotion']['primary']}")
+            
+            # Explicit End-of-Stream Flush (Patch v8.9)
+            if streaming_engine and streaming_engine.voice:
+                streaming_engine.voice.flush()
         
         except Exception as e:
             logger.error(f"Streaming error: {e}")
             inc_errors()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
-        observe_request_duration(time.time() - start_time)
+        total_dur = (time.time() - start_time) * 1000
+        observe_request_duration(total_dur / 1000.0)
         await broadcast_metrics(streaming_engine.voice.metrics)
+        
+        # Per-request Trace Log (Patch v8.9)
+        trace_id = f"req_{int(start_time)}"
+        logger.info(
+            f"TRACE[{trace_id}] npc={npc_name} "
+            f"latency={streaming_engine.voice.metrics.first_token_ms:.0f}ms "
+            f"total={total_dur:.0f}ms "
+            f"q_size={streaming_engine.voice.metrics.tts_queue_size} "
+            f"drops={streaming_engine.voice.metrics.dropped_sentences}"
+        )
     
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
@@ -380,6 +395,23 @@ async def clear_memory(npc_name: str):
     memory = ConversationManager(npc_name, str(MEMORY_DIR))
     memory.clear()
     return {"status": "cleared", "npc_name": npc_name}
+
+
+@app.get("/api/health")
+async def health_check():
+    """Operational health check (Patch v8.9)"""
+    model_ok = streaming_engine is not None and streaming_engine.llm is not None
+    tts_ok = piper_engine is not None
+    q_size = streaming_engine.voice.speech_queue.qsize() if streaming_engine else 0
+    
+    return {
+        "status": "healthy" if model_ok and tts_ok else "degraded",
+        "model_loaded": model_ok,
+        "piper_ready": tts_ok,
+        "queue_size": q_size,
+        "active_npc": list(multi_manager.sessions.keys()),
+        "uptime": time.time() # Simplistic uptime
+    }
 
 
 @app.get("/api/status")

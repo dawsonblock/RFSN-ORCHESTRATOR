@@ -59,27 +59,34 @@ class StreamTokenizer:
         Process a new token and return list of completed sentences.
         """
         sentences = []
+
         
-        # Check pending flush deadline BEFORE adding new token
-        # (Though technically token *just* arrived, so we might want to check if it cancels pending)
-        # But if the user typed slowly, we want to emit.
+        # CRITICAL (Patch v8.9): Check if new token CANCELS pending boundary BEFORE deadline flush
+        # This prevents premature flush of abbreviations like "Mr." + " Jones"
+        if self._pending_boundary and len(token) > 0:
+            # Skip leading closers/whitespace to find first content char
+            c_idx = 0
+            while c_idx < len(token) and (token[c_idx] in CLOSERS or token[c_idx].isspace()):
+                c_idx += 1
+            
+            if c_idx < len(token):  # Found a content char
+                # If alphanumeric, it canceled the boundary (continuation)
+                if token[c_idx].isalnum():
+                    self._pending_boundary = False
+
+                # Else (punctuation?), pending boundary stands until flush time
+            # Else (all closers/space), effectively still boundary-ish, let timer flush it
+        
+        # Check pending flush deadline AFTER cancellation check
         now = time.time()
         if self._pending_boundary and now >= self._pending_boundary_deadline:
+
             sentences.extend(self.flush())
             self._pending_boundary = False
             
         self.buffer += token
+
         
-        # If new text arrived and we were pending, check if it continues the sentence
-        if self._pending_boundary and len(token) > 0:
-            # Check the very first char of the NEW token (approx logic, 
-            # actually we check self.buffer at the boundary point, but simpler:)
-            # If token starts with space or closers, likely still boundary.
-            # If token starts with alphanumeric, it canceled the boundary.
-            if token[0].isalnum():
-                self._pending_boundary = False
-            # else: keep pending, it will flush or confirm soon
-            
         if len(self.buffer) < 2:
             return sentences
             
@@ -98,6 +105,7 @@ class StreamTokenizer:
             
             # Terminator check logic (Patch A)
             if char in ('.', '!', '?'):
+
                 # Check for "..."
                 if char == '.' and self.buffer[cursor:cursor+3] == '...':
                     cursor += 2
@@ -105,15 +113,18 @@ class StreamTokenizer:
 
                 j = self._peek_after_closers(self.buffer, cursor)
                 should_split = False
+
                 
                 # Boundary conditions
                 if j >= len(self.buffer):
                     # End-of-buffer: defer split (Patch B)
                     self._pending_boundary = True
                     self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
+
                     # Don't split yet
                 elif self.buffer[j].isspace():
                     should_split = True
+
                 
                 # Abbreviation Check
                 if char == '.' and should_split:
@@ -122,6 +133,9 @@ class StreamTokenizer:
                         word = word_match.group(1).lower()
                         if word in self.abbreviations:
                             should_split = False
+                        if word in self.abbreviations:
+                            should_split = False
+
                 
                 if should_split:
                     # Point j is where the next sentence *starts* (after space)
@@ -144,6 +158,7 @@ class StreamTokenizer:
     def flush(self) -> List[str]:
         """Flush remaining buffer as a sentence"""
         res = []
+        # If pending boundary, we definitely flush now
         if self.buffer.strip():
             res.append(self.buffer.strip())
         self.buffer = ""
@@ -204,6 +219,7 @@ class StreamingVoiceSystem:
         "<" + "|system|>", "[INST]", "[/INST]", "</s>", "<|end|>"
     }
     
+    
     def __init__(self, tts_engine: str = "piper", max_queue_size: int = 3):
         self.tts_engine = tts_engine
         self.speech_queue = queue.Queue(maxsize=max_queue_size)
@@ -218,6 +234,10 @@ class StreamingVoiceSystem:
         # Playback lock for thread safety
         self._playback_lock = threading.Lock()
         
+        # Queue management locks and sentinels (Patch v8.8)
+        self._queue_lock = threading.Lock()
+        self._worker_wakeup = object()
+
         # TTS engine reference (set externally)
         self._tts_engine_ref = None
         
@@ -235,7 +255,14 @@ class StreamingVoiceSystem:
         """Thread-safe worker that processes queue"""
         while not self._shutdown:
             try:
-                chunk = self.speech_queue.get(timeout=30)
+                # Reduced timeout to prevents stalls if queue reference changes (Patch v8.8)
+                chunk = self.speech_queue.get(timeout=0.5)
+                
+                # Check for sentinel (resize wakeup)
+                if chunk is self._worker_wakeup:
+                    self.speech_queue.task_done()
+                    continue
+
                 if chunk is None:  # Shutdown signal
                     break
                 
@@ -258,17 +285,57 @@ class StreamingVoiceSystem:
                 logger.error(f"TTS worker error: {e}", exc_info=True)
 
     def set_max_queue_size(self, new_max: int):
-        """Safely resize the queue at runtime"""
+        """Safely resize the queue at runtime with backlog preservation (Patch v8.8)"""
         new_max = int(new_max)
         if new_max < 1: new_max = 1
-        if new_max > 20: new_max = 20
+        if new_max > 50: new_max = 50
         
-        with self.audio_lock:
-            # Drain old queue? Or just make new one. Dropping backlog is safer/simpler for immediate effect.
-            self.speech_queue = queue.Queue(maxsize=new_max)
-            self.metrics.tts_queue_size = 0
-            self.metrics.dropped_sentences = 0
-            logger.info(f"[VoiceSystem] Resized queue to {new_max}")
+        with self._queue_lock:
+            old_q = self.speech_queue
+            old_items = []
+
+            # Drain old queue without blocking
+            while True:
+                try:
+                    x = old_q.get_nowait()
+                    if x is not self._worker_wakeup:
+                        old_items.append(x)
+                    old_q.task_done() # Mark extracted as done
+                except queue.Empty:
+                    break
+
+            # If shrinking, trim coherently while "preserving backlog"
+            if len(old_items) > new_max:
+                if new_max == 1:
+                    old_items = [old_items[-1]]  # keep most recent only
+                elif new_max == 2:
+                    old_items = [old_items[0], old_items[-1]]
+                else:
+                    # keep first + last, fill remaining from the end (most recent)
+                    keep = [old_items[0]]
+                    tail = old_items[1:-1]
+                    needed = new_max - 2
+                    keep_mid = tail[-needed:]  # most recent middle items
+                    old_items = keep + keep_mid + [old_items[-1]]
+            
+            # Create new queue
+            new_q = queue.Queue(maxsize=new_max)
+            for x in old_items:
+                try:
+                    new_q.put_nowait(x)
+                except queue.Full:
+                    break
+
+            self.speech_queue = new_q
+            logger.info(f"[VoiceSystem] Resized queue to {new_max}, preserved {len(old_items)} items")
+
+            # Wake worker: best effort push sentinel to new queue
+            try:
+                self.speech_queue.put_nowait(self._worker_wakeup)
+            except queue.Full:
+                pass
+            
+            self.metrics.tts_queue_size = self.speech_queue.qsize()
     
     def _clean_for_tts(self, text: str) -> str:
         """Targeted cleaning for TTS"""
@@ -469,8 +536,8 @@ class StreamingMantellaEngine:
                 prompt,
                 max_tokens=max_tokens,
                 stop=[
-                    "<" + "|eot_id|>", "Player:", "User:", "<" + "|end|>", "</s>", 
-                    "\nPlayer:", "\nUser:", "\nYou:", "\nNPC:"
+                    "<" + "|eot_id|>", "<" + "|end|>", "</s>", 
+                    "\nPlayer:", "\nUser:", "\nYou:", "\nNPC:", "Player:", "User:"
                 ],
                 stream=True,
                 echo=False,
