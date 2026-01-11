@@ -11,7 +11,7 @@ import time
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Security
@@ -303,7 +303,7 @@ async def stream_dialogue(request: DialogueRequest):
             
             # Explicit End-of-Stream Flush (Patch v8.9)
             if streaming_engine and streaming_engine.voice:
-                streaming_engine.voice.flush()
+                streaming_engine.voice.flush_pending()
         
         except Exception as e:
             logger.error(f"Streaming error: {e}")
@@ -442,6 +442,9 @@ async def tune_performance(settings: PerformanceSettings):
     if settings.temperature is not None:
         current_conf["temperature"] = settings.temperature
     if settings.max_queue_size is not None:
+        # Validate queue size before applying (Phase 1 fix)
+        if not (1 <= settings.max_queue_size <= 50):
+            raise HTTPException(status_code=400, detail="max_queue_size must be between 1 and 50")
         current_conf["max_queue_size"] = settings.max_queue_size
     if settings.max_tokens is not None:
         current_conf["max_tokens"] = settings.max_tokens

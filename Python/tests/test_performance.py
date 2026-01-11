@@ -123,8 +123,8 @@ class TestResourceUsage:
         voice.sentence_buffer = "Some text"
         voice.metrics.first_token_ms = 100.0
         
-        # Flush
-        voice.flush()
+        # Reset
+        voice.reset()
         
         # Should be cleared
         assert voice.sentence_buffer == ""

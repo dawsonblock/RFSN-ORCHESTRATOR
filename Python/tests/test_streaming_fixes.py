@@ -247,8 +247,8 @@ class TestMetrics:
         voice.metrics.first_token_ms = 100.0
         voice.metrics.dropped_sentences = 5
         
-        # Flush
-        voice.flush()
+        # Reset
+        voice.reset()
         
         # Should be reset
         assert voice.metrics.first_token_ms == 0.0

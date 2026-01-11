@@ -148,7 +148,7 @@ class MemoryLeakTester:
                 voice.speak(f"Test message {j}")
             
             # Flush and cleanup
-            voice.flush()
+            voice.reset()
             voice.shutdown()
             del voice
             

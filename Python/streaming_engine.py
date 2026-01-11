@@ -133,8 +133,6 @@ class StreamTokenizer:
                         word = word_match.group(1).lower()
                         if word in self.abbreviations:
                             should_split = False
-                        if word in self.abbreviations:
-                            should_split = False
 
                 
                 if should_split:
@@ -465,10 +463,18 @@ class StreamingVoiceSystem:
         self.metrics.total_generation_ms = (time.time() - start_time) * 1000
         self.metrics.tts_queue_size = self.speech_queue.qsize()
     
-    def flush(self):
-        """Clear buffer and queue"""
+    def flush_pending(self):
+        """Enqueue any remaining buffered text as final sentence(s)."""
+        leftovers = self.tokenizer.flush()
+        for s in leftovers:
+            self.speak(s)
+    
+    def reset(self):
+        """Hard reset: clears queue + tokenizer + metrics."""
         self.tokenizer = StreamTokenizer()
-        while not self.speech_queue.empty():
+        # Drain queue safely with size snapshot to avoid race conditions
+        queue_size = self.speech_queue.qsize()
+        for _ in range(queue_size):
             try:
                 self.speech_queue.get_nowait()
                 self.speech_queue.task_done()
