@@ -267,6 +267,11 @@ async def stream_dialogue(request: DialogueRequest):
     system_prompt = f"You are {state.npc_name}. {state.get_attitude_instruction()} Keep it short (1-2 sentences)."
     full_prompt = f"System: {system_prompt}\n{history}\nPlayer: {request.user_input}\n{state.npc_name}:"
     
+    # Snapshot configuration per request (Patch 4) prevents mid-stream tuning weirdness
+    req_config = config_watcher.get_all()
+    snapshot_temp = req_config.get("temperature", 0.7)
+    snapshot_max_tokens = req_config.get("max_tokens", 80)
+
     # Stream response
     async def stream_generator():
         full_response = ""
@@ -274,11 +279,8 @@ async def stream_dialogue(request: DialogueRequest):
         start_gen = time.time()
         
         try:
-            # Apply runtime settings from config
-            current_temp = config_watcher.get("temperature", 0.7)
-            current_max = config_watcher.get("max_tokens", 80)
-            
-            for chunk in streaming_engine.generate_streaming(full_prompt, max_tokens=current_max, temperature=current_temp):
+            # Use snapshot values
+            for chunk in streaming_engine.generate_streaming(full_prompt, max_tokens=snapshot_max_tokens, temperature=snapshot_temp):
                 clean_text = _cleanup_tokens(chunk.text)
                 
                 if not first_chunk_sent:

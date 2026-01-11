@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RFSN Streaming Engine v8.1 - Production Ready
+RFSN Streaming Engine v8.7 - Hardened Reliability
 Fixes: sentence fragmentation, race conditions, token bleeding, backpressure
 """
 
@@ -9,10 +9,6 @@ import queue
 import re
 import time
 import logging
-import tempfile
-import subprocess
-import os
-import sys
 from typing import Generator, Optional, List, Callable, Dict, Any
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +16,8 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+CLOSERS = set(['"', "'", "”", "’", ")", "]", "}"])
+BOUNDARY_FLUSH_MS = 180  # flush boundary if no continuation arrives quickly
 
 @dataclass
 class SentenceChunk:
@@ -39,21 +37,49 @@ class StreamTokenizer:
         self.in_quotes = False
         self.quote_char = None  # ' or "
         
+        # Deferred split state
+        self._pending_boundary = False
+        self._pending_boundary_deadline = 0.0
+        
         # Abbreviations that end in dot but shouldn't split
         self.abbreviations = {
             'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 
             'mt', 'capt', 'col', 'gen', 'lt', 'sgt', 'corp', 
-            'etc', 'vs', 'inc', 'ltd', 'fig', 'no', 'op'
+            'etc', 'vs', 'inc', 'ltd', 'fig', 'op'
         }
+    
+    def _peek_after_closers(self, s: str, i: int) -> int:
+        j = i + 1
+        while j < len(s) and s[j] in CLOSERS:
+            j += 1
+        return j
     
     def process(self, token: str) -> List[str]:
         """
         Process a new token and return list of completed sentences.
         """
         sentences = []
+        
+        # Check pending flush deadline BEFORE adding new token
+        # (Though technically token *just* arrived, so we might want to check if it cancels pending)
+        # But if the user typed slowly, we want to emit.
+        now = time.time()
+        if self._pending_boundary and now >= self._pending_boundary_deadline:
+            sentences.extend(self.flush())
+            self._pending_boundary = False
+            
         self.buffer += token
         
-        # We only try to split if we have a reasonable buffer
+        # If new text arrived and we were pending, check if it continues the sentence
+        if self._pending_boundary and len(token) > 0:
+            # Check the very first char of the NEW token (approx logic, 
+            # actually we check self.buffer at the boundary point, but simpler:)
+            # If token starts with space or closers, likely still boundary.
+            # If token starts with alphanumeric, it canceled the boundary.
+            if token[0].isalnum():
+                self._pending_boundary = False
+            # else: keep pending, it will flush or confirm soon
+            
         if len(self.buffer) < 2:
             return sentences
             
@@ -70,24 +96,23 @@ class StreamTokenizer:
                     self.in_quotes = False
                     self.quote_char = None
             
-            # Check for terminator if not in quotes
-            if not self.in_quotes and char in ('.', '!', '?'):
-                # Look ahead
-                # If '...', treat as pause but keep together? 
-                if cursor + 1 >= len(self.buffer):
-                    break # Wait for more data
-                
-                next_char = self.buffer[cursor+1]
-                
+            # Terminator check logic (Patch A)
+            if char in ('.', '!', '?'):
                 # Check for "..."
                 if char == '.' and self.buffer[cursor:cursor+3] == '...':
                     cursor += 2
                     continue
-                
+
+                j = self._peek_after_closers(self.buffer, cursor)
                 should_split = False
                 
-                # Case 1: Punctuation followed by space
-                if next_char.isspace():
+                # Boundary conditions
+                if j >= len(self.buffer):
+                    # End-of-buffer: defer split (Patch B)
+                    self._pending_boundary = True
+                    self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
+                    # Don't split yet
+                elif self.buffer[j].isspace():
                     should_split = True
                 
                 # Abbreviation Check
@@ -99,13 +124,18 @@ class StreamTokenizer:
                             should_split = False
                 
                 if should_split:
-                    split_idx = cursor + 1
+                    # Point j is where the next sentence *starts* (after space)
+                    # But actually we want to slice up to j (keeping punctuation+closers)
+                    # self.buffer[j] is space.
+                    split_idx = j 
                     sentence = self.buffer[:split_idx].strip()
                     if sentence:
                         sentences.append(sentence)
                     
                     self.buffer = self.buffer[split_idx:]
-                    cursor = -1 # Restart scanning new buffer from 0
+                    cursor = -1 # Restart scanning new buffer
+                    self._pending_boundary = False
+                    self.in_quotes = False # Sentence boundary creates clean slate
             
             cursor += 1
             
@@ -118,6 +148,7 @@ class StreamTokenizer:
             res.append(self.buffer.strip())
         self.buffer = ""
         self.in_quotes = False
+        self._pending_boundary = False
         return res
 
 
@@ -165,7 +196,6 @@ class StreamingVoiceSystem:
     - Automatic token filtering
     - Error handling (no silent failures)
     """
-    
     
     # Tokens that should NEVER be spoken (LLM control tokens)
     BAD_TOKENS = {
@@ -222,8 +252,6 @@ class StreamingVoiceSystem:
                 
                 self.speech_queue.task_done()
                 
-                self.speech_queue.task_done()
-                
             except queue.Empty:
                 continue
             except Exception as e:
@@ -243,61 +271,67 @@ class StreamingVoiceSystem:
             logger.info(f"[VoiceSystem] Resized queue to {new_max}")
     
     def _clean_for_tts(self, text: str) -> str:
-        """
-        Targeted cleaning for TTS:
-        - Removes *actions* and [stage directions]
-        - Preserves (parentheses) unless they contain only 1-2 words likely to be action?
-        - Removes HTML-like tags
-        """
+        """Targeted cleaning for TTS"""
         original = text
-        
-        # Remove special tokens
         for token in self.BAD_TOKENS:
             text = text.replace(token, "")
-        
-        # Remove actions: *sighs*, [laughs]
-        # Match *...*
         text = re.sub(r'\*[^\*]+\*', '', text)
-        # Match [...]
         text = re.sub(r'\[[^\]]+\]', '', text)
-        
-        # Remove HTML-like tags
         text = re.sub(r'<[^>]+>', '', text)
-        
-        # Consolidate whitespace
         text = ' '.join(text.split())
-        
-        # Reject if too short (unless it's a short word like "No.")
-        if len(text) < 2 and not text.isalnum():
-            return ""
-        
-        # Reject if high code-to-text ratio (gibberish detection)
-        # Loosened check to match reality
+        if len(text) < 2 and not text.isalnum(): return ""
         alpha_count = sum(c.isalpha() for c in text)
-        if len(text) > 20 and alpha_count / len(text) < 0.3:
-            logger.debug(f"Rejected low alpha ratio: {text}")
-            return ""
-
+        if len(text) > 20 and alpha_count / len(text) < 0.3: return ""
         return text.strip()
     
     def _subprocess_speak(self, text: str):
-        """
-        Process-safe audio playback using subprocess.
-        
-        CRITICAL: We use subprocess instead of sounddevice because
-        sounddevice is NOT thread-safe and will crash under load.
-        """
+        """Process-safe audio playback"""
         if self._tts_engine_ref is not None:
             try:
                 self._tts_engine_ref.speak_sync(text)
             except Exception as e:
                 logger.error(f"TTS subprocess error: {e}")
         else:
-            # Fallback: log the text that would be spoken
             logger.info(f"[TTS-MOCK] Would speak: {text[:50]}...")
-    
+
+    def _drop_policy(self):
+        """
+        Coherence-preserving policy (Patch 2):
+        - If queue has 1 item: drop it
+        - If 2+: drop middle, keep first (context) and last (latest)
+        """
+        items = []
+        while True:
+            try:
+                items.append(self.speech_queue.get_nowait())
+                self.speech_queue.task_done()
+            except queue.Empty:
+                break
+
+        if not items:
+            return
+
+        if len(items) == 1:
+            # Drop the only item
+            self._dropped_count += 1
+            self.metrics.dropped_sentences += 1
+            return
+
+        # Keep first and last, drop a middle item
+        mid = len(items) // 2
+        dropped_item = items.pop(mid)
+        self._dropped_count += 1
+        self.metrics.dropped_sentences += 1
+        logger.warning(f"Backpressure drop (middle): {dropped_item.text[:20]}...")
+
+        for it in items:
+            try:
+                self.speech_queue.put_nowait(it)
+            except queue.Full:
+                break # Should not happen if we just removed one
+
     def speak(self, text: str) -> bool:
-        """Queue text for TTS with backpressure handling"""
+        """Queue text for TTS with backpressure handling (Patch 2)"""
         if not text or self._shutdown:
             return False
         
@@ -306,18 +340,14 @@ class StreamingVoiceSystem:
             self.speech_queue.put_nowait(chunk)
             return True
         except queue.Full:
-            # Backpressure: drop oldest, add new
-            try:
-                old = self.speech_queue.get_nowait()
-                self._dropped_count += 1
-                self.metrics.dropped_sentences += 1
-                logger.warning(f"Dropped sentence due to backpressure: {old.text[:30]}...")
-            except queue.Empty:
-                pass
+            # Backpressure: smart drop
+            self._drop_policy()
+            # Try again
             try:
                 self.speech_queue.put_nowait(chunk)
                 return True
             except queue.Full:
+                self.metrics.dropped_sentences += 1
                 return False
     
     def process_stream(self, token_generator: Generator[str, None, None]) -> Generator[SentenceChunk, None, None]:
@@ -407,13 +437,11 @@ class StreamingMantellaEngine:
         """Load llama.cpp model with KV cache persistence"""
         try:
             from llama_cpp import Llama
-            
             self.llm = Llama(
                 model_path=model_path,
                 n_ctx=2048,
-                n_gpu_layers=-1,  # Use all GPU layers
+                n_gpu_layers=-1, 
                 verbose=False,
-                # KV cache persists between calls (massive speedup)
             )
             logger.info(f"StreamingMantellaEngine loaded: {Path(model_path).name}")
         except ImportError:
@@ -422,26 +450,28 @@ class StreamingMantellaEngine:
             logger.error(f"Failed to load model: {e}")
     
     def generate_streaming(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> Generator[SentenceChunk, None, None]:
-        """Generate with streaming and full metrics"""
+        """Generate with streaming and full metrics - Patch 3 Stop Conditions"""
         
         if self.llm is None:
-            # Mock token stream that flows through REAL sentence pipeline
+            # Mock token stream
             def mock_tokens():
-                text = "I am a Skyrim NPC running in mock mode. I should still detection sentences, abbreviate Dr. correctly, and queue for TTS."
+                text = "I am a Skyrim NPC running in mock mode. I should still detect sentences, abbreviate Dr. correctly, and queue for TTS."
                 for word in text.split(" "):
                     yield word + " "
                     time.sleep(0.05)
                 yield ""
-            
             yield from self.voice.process_stream(mock_tokens())
             return
         
-        # Create token generator
+        # Create token generator with Expanded Stops (Patch 3)
         def token_gen():
             stream = self.llm(
                 prompt,
                 max_tokens=max_tokens,
-                stop=["<" + "|eot_id|>", "Player:", "User:", "<" + "|end|>", "</s>", "\n\nPlayer:", "\nUser:"],
+                stop=[
+                    "<" + "|eot_id|>", "Player:", "User:", "<" + "|end|>", "</s>", 
+                    "\nPlayer:", "\nUser:", "\nYou:", "\nNPC:"
+                ],
                 stream=True,
                 echo=False,
                 temperature=temperature,
