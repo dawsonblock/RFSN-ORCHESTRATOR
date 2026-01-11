@@ -24,3 +24,6 @@ httpx==0.26.0
 
 # Utilities
 python-dotenv==1.0.0
+
+# Static Files
+aiofiles==23.2.1

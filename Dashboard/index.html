@@ -1,464 +1,570 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RFSN Orchestrator v8.1 - Live Metrics</title>
+    <title>RFSN Orchestrator v8.6 - Premium</title>
     <style>
         :root {
-            --bg-primary: #0a0a0f;
-            --bg-secondary: #12121a;
-            --bg-card: #1a1a25;
-            --text-primary: #e4e4e7;
-            --text-secondary: #a1a1aa;
-            --accent-green: #22c55e;
-            --accent-blue: #3b82f6;
-            --accent-amber: #f59e0b;
-            --accent-red: #ef4444;
-            --gradient-1: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --gradient-2: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --bg-dark: #050508;
+            --glass-bg: rgba(20, 20, 30, 0.4);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.03);
+
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+
+            --accent-primary: #6366f1;
+            /* Indigo */
+            --accent-success: #10b981;
+            /* Emerald */
+            --accent-warning: #f59e0b;
+            /* Amber */
+            --accent-danger: #ef4444;
+            /* Red */
+
+            --gradient-glow: radial-gradient(circle at 50% -20%, #4f46e533, transparent 70%);
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-primary);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-dark);
             color: var(--text-primary);
             min-height: 100vh;
             padding: 2rem;
+            background-image: var(--gradient-glow);
+            background-attachment: fixed;
+            overflow-x: hidden;
         }
-        
+
+        /* Ambient Background Loop */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 80% 20%, #6366f111, transparent 40%),
+                radial-gradient(circle at 20% 80%, #ec489911, transparent 40%);
+            z-index: -1;
+            animation: float 20s ease-in-out infinite alternate;
+        }
+
+        @keyframes float {
+            0% {
+                transform: scale(1);
+            }
+
+            100% {
+                transform: scale(1.1);
+            }
+        }
+
         .container {
             max-width: 1400px;
             margin: 0 auto;
         }
-        
+
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 2rem;
+            margin-bottom: 3rem;
         }
-        
+
         h1 {
-            font-size: 1.75rem;
-            font-weight: 600;
-            background: var(--gradient-1);
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
+            letter-spacing: -0.02em;
         }
-        
+
         .status-badge {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.6rem;
             padding: 0.5rem 1rem;
-            background: var(--bg-card);
-            border-radius: 9999px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 99px;
             font-size: 0.875rem;
+            backdrop-filter: blur(10px);
         }
-        
+
         .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: var(--accent-green);
-            animation: pulse 2s infinite;
+            background: var(--text-secondary);
+            transition: all 0.3s ease;
         }
-        
+
+        .status-dot.connected {
+            background: var(--accent-success);
+            box-shadow: 0 0 10px var(--accent-success);
+        }
+
         .status-dot.disconnected {
-            background: var(--accent-red);
-            animation: none;
+            background: var(--accent-danger);
         }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .metrics-grid {
+
+        /* Glass Cards */
+        .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
-        
-        .metric-card {
-            background: var(--bg-card);
-            border-radius: 16px;
+
+        .card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
             padding: 1.5rem;
-            position: relative;
-            overflow: hidden;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s ease, border-color 0.2s;
         }
-        
-        .metric-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: var(--gradient-1);
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
         }
-        
-        .metric-card.warning::before {
-            background: var(--accent-amber);
-        }
-        
-        .metric-card.danger::before {
-            background: var(--accent-red);
-        }
-        
-        .metric-label {
-            font-size: 0.875rem;
+
+        .card-label {
+            font-size: 0.85rem;
             color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
             margin-bottom: 0.5rem;
         }
-        
-        .metric-value {
+
+        .card-value {
             font-size: 2.5rem;
             font-weight: 700;
-            font-variant-numeric: tabular-nums;
+            margin-bottom: 0.5rem;
         }
-        
-        .metric-unit {
+
+        .card-unit {
             font-size: 1rem;
             color: var(--text-secondary);
             font-weight: 400;
-            margin-left: 0.25rem;
         }
-        
-        .metric-delta {
-            font-size: 0.875rem;
-            color: var(--accent-green);
-            margin-top: 0.5rem;
+
+        .card-sub {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
         }
-        
-        .metric-delta.negative {
-            color: var(--accent-red);
+
+        /* SVG Chart */
+        .chart-wrapper {
+            width: 100%;
+            height: 60px;
+            margin-top: 1rem;
+            position: relative;
         }
-        
-        .chart-section {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
+
+        .sparkline {
+            width: 100%;
+            height: 100%;
+            fill: none;
+            stroke: var(--accent-primary);
+            stroke-width: 2;
+            vector-effect: non-scaling-stroke;
         }
-        
-        .chart-header {
+
+        /* Controls */
+        .control-row {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 1rem;
+            justify-content: space-between;
+            margin-top: 1rem;
         }
-        
-        .chart-title {
-            font-size: 1rem;
-            font-weight: 500;
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 4px;
+            background: var(--glass-border);
+            border-radius: 2px;
+            outline: none;
+            margin: 1rem 0;
         }
-        
-        .chart-container {
-            height: 200px;
-            display: flex;
-            align-items: flex-end;
-            gap: 4px;
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent-primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent-primary);
         }
-        
-        .chart-bar {
-            flex: 1;
-            background: var(--accent-blue);
-            border-radius: 4px 4px 0 0;
-            min-height: 4px;
-            transition: height 0.3s ease;
-        }
-        
-        .chart-bar.fast {
-            background: var(--accent-green);
-        }
-        
-        .chart-bar.slow {
-            background: var(--accent-amber);
-        }
-        
-        .chart-bar.very-slow {
-            background: var(--accent-red);
-        }
-        
-        .log-section {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 1.5rem;
-        }
-        
-        .log-title {
-            font-size: 1rem;
-            font-weight: 500;
-            margin-bottom: 1rem;
-        }
-        
-        .log-container {
-            height: 200px;
-            overflow-y: auto;
-            font-family: 'Fira Code', 'Consolas', monospace;
-            font-size: 0.75rem;
-            background: var(--bg-secondary);
+
+        .btn {
+            background: var(--glass-highlight);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+            padding: 0.6rem 1.2rem;
             border-radius: 8px;
-            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+            font-weight: 500;
+            width: 100%;
         }
-        
-        .log-entry {
-            padding: 0.25rem 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+
+        .btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
         }
-        
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            border-color: transparent;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #4f46e5;
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.3);
+        }
+
+        /* Logs */
+        .log-panel {
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.8rem;
+        }
+
+        .log-line {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            display: flex;
+            gap: 10px;
+        }
+
         .log-time {
             color: var(--text-secondary);
+            opacity: 0.7;
         }
-        
-        .log-msg {
+
+        .log-info {
             color: var(--text-primary);
         }
-        
-        .log-msg.success {
-            color: var(--accent-green);
+
+        .log-success {
+            color: var(--accent-success);
         }
-        
-        .log-msg.warning {
-            color: var(--accent-amber);
+
+        .log-error {
+            color: var(--accent-danger);
         }
-        
-        .log-msg.error {
-            color: var(--accent-red);
+
+        /* Toasts */
+        .toast-container {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            z-index: 1000;
         }
-        
+
+        .toast {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            backdrop-filter: blur(20px);
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            animation: slideIn 0.3s ease-out;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 300px;
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--accent-success);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--accent-danger);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+        }
+
         footer {
+            margin-top: 4rem;
             text-align: center;
             color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-top: 2rem;
+            font-size: 0.8rem;
+            opacity: 0.5;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
+        <!-- Header -->
         <header>
-            <h1>RFSN Orchestrator v8.1</h1>
-            <div class="status-badge" id="status">
-                <span class="status-dot" id="statusDot"></span>
+            <h1>RFSN Orchestrator <span style="font-size:0.5em; opacity:0.5; font-weight:400">v8.6</span></h1>
+            <div class="status-badge">
+                <div class="status-dot" id="statusDot"></div>
                 <span id="statusText">Connecting...</span>
             </div>
         </header>
-        
-        <div class="metrics-grid">
-            <div class="metric-card" id="firstTokenCard">
-                <div class="metric-label">First Token Latency</div>
-                <div class="metric-value">
-                    <span id="firstToken">--</span>
-                    <span class="metric-unit">ms</span>
+
+        <!-- Main Metrics -->
+        <div class="grid">
+            <!-- Latency Card -->
+            <div class="card" style="grid-column: span 2">
+                <div class="card-label">Latency (First Sentence)</div>
+                <div class="card-value">
+                    <span id="firstSentenceVal">--</span>
+                    <span class="card-unit">ms</span>
                 </div>
-                <div class="metric-delta" id="firstTokenDelta">Target: &lt;500ms</div>
-            </div>
-            
-            <div class="metric-card" id="firstSentenceCard">
-                <div class="metric-label">First Sentence Latency</div>
-                <div class="metric-value">
-                    <span id="firstSentence">--</span>
-                    <span class="metric-unit">ms</span>
+                <div class="card-sub" id="firstSentenceDelta">Target: < 1500ms</div>
+                        <div class="chart-wrapper">
+                            <svg id="latencySparkline" class="sparkline" viewBox="0 0 100 20"
+                                preserveAspectRatio="none">
+                                <!-- Path injected by JS -->
+                            </svg>
+                        </div>
                 </div>
-                <div class="metric-delta" id="firstSentenceDelta">Target: &lt;1500ms</div>
-            </div>
-            
-            <div class="metric-card">
-                <div class="metric-label">Total Generation</div>
-                <div class="metric-value">
-                    <span id="totalGen">--</span>
-                    <span class="metric-unit">ms</span>
+
+                <!-- Queue Card -->
+                <div class="card">
+                    <div class="card-label">TTS Queue</div>
+                    <div class="card-value">
+                        <span id="queueVal">0</span>
+                        <span class="card-unit">/ 3</span>
+                    </div>
+                    <div class="card-sub" id="droppedVal">0 dropped</div>
                 </div>
             </div>
-            
-            <div class="metric-card" id="queueCard">
-                <div class="metric-label">TTS Queue Size</div>
-                <div class="metric-value">
-                    <span id="queueSize">0</span>
-                    <span class="metric-unit">/ 3</span>
+
+            <!-- Controls & Logs -->
+            <div class="grid">
+                <!-- Controls -->
+                <div class="card">
+                    <div class="card-label">Runtime Tuning</div>
+
+                    <div style="margin-top: 1.5rem">
+                        <div class="control-row">
+                            <span class="card-sub">Temperature</span>
+                            <span class="card-sub" id="tempDisplay">0.7</span>
+                        </div>
+                        <input type="range" id="tempSlider" min="0.1" max="2.0" step="0.1" value="0.7"
+                            oninput="document.getElementById('tempDisplay').innerText = this.value">
+
+                        <button class="btn btn-primary" onclick="applyTuning(this)">Apply Changes</button>
+                    </div>
+
+                    <div style="margin-top: 2rem; border-top: 1px solid var(--glass-border); padding-top: 1.5rem">
+                        <div class="card-label">Dangerous Actions</div>
+                        <div style="display:flex; gap:10px; margin-top:10px">
+                            <button class="btn btn-danger" onclick="safeReset()">Safe Reset NPC</button>
+                        </div>
+                    </div>
                 </div>
-                <div class="metric-delta">Backpressure active at 3</div>
-            </div>
-            
-            <div class="metric-card" id="droppedCard">
-                <div class="metric-label">Dropped Sentences</div>
-                <div class="metric-value">
-                    <span id="dropped">0</span>
+
+                <!-- Logs -->
+                <div class="card log-panel" id="logPanel">
+                    <!-- Logs injected here -->
                 </div>
-                <div class="metric-delta" id="droppedDelta">Due to backpressure</div>
             </div>
+
+            <footer>
+                Running on FAST-RFSN · Powered by Mantella & Piper
+            </footer>
         </div>
-        
-        <div class="chart-section">
-            <div class="chart-header">
-                <span class="chart-title">Latency History (last 50 requests)</span>
-            </div>
-            <div class="chart-container" id="latencyChart"></div>
-        </div>
-        
-        <div class="log-section">
-            <div class="log-title">Event Log</div>
-            <div class="log-container" id="logContainer"></div>
-        </div>
-        
-        <footer>
-            RFSN GenAI Orchestrator v8.1 | WebSocket: ws://127.0.0.1:8000/ws/metrics
-        </footer>
-    </div>
-    
-    <script>
-        const MAX_HISTORY = 50;
-        const latencyHistory = [];
-        let ws = null;
-        let reconnectAttempts = 0;
-        
-        function log(msg, type = 'info') {
-            const container = document.getElementById('logContainer');
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            
-            const now = new Date().toLocaleTimeString();
-            entry.innerHTML = `
-                <span class="log-time">[${now}]</span>
-                <span class="log-msg ${type}">${msg}</span>
+
+        <!-- Toast Container -->
+        <div class="toast-container" id="toastContainer"></div>
+
+        <script>
+            // --- State ---
+            const history = new Array(50).fill(0);
+            let ws = null;
+            let retryCount = 0;
+
+            // --- UI Logic ---
+            function showToast(msg, type = 'success') {
+                const container = document.getElementById('toastContainer');
+                const el = document.createElement('div');
+                el.className = `toast ${type}`;
+                el.innerText = msg;
+                container.appendChild(el);
+
+                // Remove after 3s
+                setTimeout(() => {
+                    el.style.animation = 'fadeOut 0.3s forwards';
+                    setTimeout(() => el.remove(), 300);
+                }, 3000);
+            }
+
+            function log(msg, type = 'info') {
+                const panel = document.getElementById('logPanel');
+                const row = document.createElement('div');
+                row.className = 'log-line';
+                row.innerHTML = `
+                <span class="log-time">${new Date().toLocaleTimeString()}</span>
+                <span class="log-${type}">${msg}</span>
             `;
-            
-            container.insertBefore(entry, container.firstChild);
-            
-            // Keep only last 100 entries
-            while (container.children.length > 100) {
-                container.removeChild(container.lastChild);
+                panel.insertBefore(row, panel.firstChild);
+                if (panel.children.length > 50) panel.lastChild.remove();
             }
-        }
-        
-        function updateStatus(connected) {
-            const dot = document.getElementById('statusDot');
-            const text = document.getElementById('statusText');
-            
-            if (connected) {
-                dot.classList.remove('disconnected');
-                text.textContent = 'Connected';
-            } else {
-                dot.classList.add('disconnected');
-                text.textContent = 'Disconnected';
-            }
-        }
-        
-        function updateMetrics(data) {
-            document.getElementById('firstToken').textContent = 
-                data.first_token_ms?.toFixed(0) || '--';
-            document.getElementById('firstSentence').textContent = 
-                data.first_sentence_ms?.toFixed(0) || '--';
-            document.getElementById('totalGen').textContent = 
-                data.total_generation_ms?.toFixed(0) || '--';
-            document.getElementById('queueSize').textContent = 
-                data.tts_queue_size || 0;
-            document.getElementById('dropped').textContent = 
-                data.dropped_sentences || 0;
-            
-            // Update card states
-            const firstSentenceCard = document.getElementById('firstSentenceCard');
-            const sentenceMs = data.first_sentence_ms || 0;
-            firstSentenceCard.classList.remove('warning', 'danger');
-            if (sentenceMs > 1500) {
-                firstSentenceCard.classList.add('danger');
-            } else if (sentenceMs > 1000) {
-                firstSentenceCard.classList.add('warning');
-            }
-            
-            // Update chart
-            if (data.first_sentence_ms) {
-                latencyHistory.push(data.first_sentence_ms);
-                if (latencyHistory.length > MAX_HISTORY) {
-                    latencyHistory.shift();
+
+            function updateSparkline() {
+                const svg = document.getElementById('latencySparkline');
+                const max = Math.max(...history, 1000);
+
+                // Generate path string: M 0 y0 L 1 y1 ...
+                let d = `M 0 ${20 - (history[0] / max) * 20}`;
+                for (let i = 1; i < history.length; i++) {
+                    const x = (i / (history.length - 1)) * 100;
+                    const y = 20 - (history[i] / max) * 20;
+                    d += ` L ${x} ${y}`;
                 }
-                updateChart();
+
+                svg.innerHTML = `<path d="${d}" fill="none" stroke="currentColor" stroke-width="0.5" />`;
             }
-            
-            // Log
-            log(`Latency: ${data.first_sentence_ms?.toFixed(0)}ms, Queue: ${data.tts_queue_size}`, 
-                sentenceMs > 1500 ? 'warning' : 'success');
-        }
-        
-        function updateChart() {
-            const container = document.getElementById('latencyChart');
-            container.innerHTML = '';
-            
-            const maxLatency = Math.max(...latencyHistory, 2000);
-            
-            latencyHistory.forEach(ms => {
-                const bar = document.createElement('div');
-                bar.className = 'chart-bar';
-                
-                const height = (ms / maxLatency) * 100;
-                bar.style.height = `${Math.max(height, 2)}%`;
-                
-                if (ms < 800) bar.classList.add('fast');
-                else if (ms < 1500) bar.classList.add('slow');
-                else bar.classList.add('very-slow');
-                
-                container.appendChild(bar);
-            });
-        }
-        
-        function connect() {
-            ws = new WebSocket('ws://127.0.0.1:8000/ws/metrics');
-            
-            ws.onopen = () => {
-                updateStatus(true);
-                reconnectAttempts = 0;
-                log('Connected to orchestrator', 'success');
-            };
-            
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
+
+            // --- WebSocket ---
+            function connect() {
+                ws = new WebSocket(`ws://${location.host}/ws/metrics`);
+
+                ws.onopen = () => {
+                    document.getElementById('statusDot').classList.add('connected');
+                    document.getElementById('statusText').innerText = "Live";
+                    log("Connected to Orchestrator", "success");
+                    retryCount = 0;
+                };
+
+                ws.onclose = () => {
+                    document.getElementById('statusDot').classList.remove('connected');
+                    document.getElementById('statusText').innerText = "Reconnecting...";
+                    log("Disconnected", "error");
+                    setTimeout(connect, Math.min(1000 * Math.pow(2, retryCount++), 10000));
+                };
+
+                ws.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
                     if (data.type === 'metrics') {
-                        updateMetrics(data);
-                    } else if (data.type === 'connected') {
-                        log(data.message, 'success');
+                        // Update Values
+                        document.getElementById('firstSentenceVal').innerText = data.first_sentence_ms?.toFixed(0) || '--';
+                        document.getElementById('queueVal').innerText = data.tts_queue_size;
+                        document.getElementById('droppedVal').innerText = `${data.dropped_sentences} dropped`;
+
+                        // Update Chart
+                        if (data.first_sentence_ms) {
+                            history.shift();
+                            history.push(data.first_sentence_ms);
+                            updateSparkline();
+                        }
+                    }
+                };
+            }
+
+            // --- Actions ---
+            async function applyTuning(btn) {
+                const temp = parseFloat(document.getElementById('tempSlider').value);
+                const originalText = btn.innerText;
+
+                btn.disabled = true;
+                btn.innerText = "Applying...";
+
+                try {
+                    const res = await fetch('/api/tune-performance', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-API-Key': 'admin' },
+                        body: JSON.stringify({ temperature: temp })
+                    });
+
+                    if (res.ok) {
+                        showToast(`Temperature set to ${temp}`, 'success');
+                        log(`Tuning applied: Temp=${temp}`, 'success');
+                    } else {
+                        throw new Error(res.statusText);
                     }
                 } catch (e) {
-                    console.error('Parse error:', e);
+                    showToast(`Failed: ${e.message}`, 'error');
+                    log(`Tuning error: ${e.message}`, 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = originalText;
                 }
-            };
-            
-            ws.onclose = () => {
-                updateStatus(false);
-                log('Disconnected from orchestrator', 'error');
-                
-                // Reconnect with backoff
-                reconnectAttempts++;
-                const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
-                log(`Reconnecting in ${delay/1000}s...`, 'warning');
-                setTimeout(connect, delay);
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                log('WebSocket error', 'error');
-            };
-        }
-        
-        // Initialize
-        log('Starting dashboard...', 'info');
-        connect();
-        
-        // Populate initial chart bars
-        for (let i = 0; i < 20; i++) {
-            latencyHistory.push(0);
-        }
-        updateChart();
-    </script>
+            }
+
+            async function safeReset() {
+                const npc = prompt("NPC Name to reset:", "TestNPC");
+                if (!npc) return;
+
+                try {
+                    const res = await fetch(`/api/memory/${npc}/safe_reset`, {
+                        method: 'POST',
+                        headers: { 'X-API-Key': 'admin' }
+                    });
+                    if (res.ok) {
+                        showToast(`Reset ${npc} successful`, 'success');
+                        log(`Reset ${npc}`, 'success');
+                    } else throw new Error("API Failure");
+                } catch (e) {
+                    showToast("Reset Failed", 'error');
+                }
+            }
+
+            // Init
+            connect();
+            updateSparkline();
+        </script>
 </body>
+
 </html>

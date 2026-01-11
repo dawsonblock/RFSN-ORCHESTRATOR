@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Security
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Import core modules
@@ -422,6 +423,16 @@ async def tune_performance(settings: PerformanceSettings):
         )
     
     return {"status": "updated", "new_settings": current_conf}
+
+
+
+# Mount Dashboard (Must be after API routes to avoid masking)
+DASHBOARD_DIR = Path(__file__).parent.parent / "Dashboard"
+if DASHBOARD_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
+    logger.info(f"Dashboard mounted at / from {DASHBOARD_DIR}")
+else:
+    logger.warning(f"Dashboard directory not found at {DASHBOARD_DIR}")
 
 
 if __name__ == "__main__":
