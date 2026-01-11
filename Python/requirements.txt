@@ -1,0 +1,30 @@
+# RFSN GenAI Orchestrator v8.1 - Python Dependencies
+# Production-grade with pinned versions
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+python-multipart==0.0.6
+
+# LLM Inference
+llama-cpp-python==0.2.56
+
+# Audio (process-safe, not sounddevice)
+pydub==0.25.1
+pyaudio==0.2.14
+
+# NLP (fallback sentence detection)
+nltk==3.8.1
+
+# HTTP requests (for model downloads)
+requests==2.31.0
+tqdm==4.66.1
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0
+
+# Utilities
+python-dotenv==1.0.0

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFSN Orchestrator v8.1 - Live Metrics</title>
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a25;
+            --text-primary: #e4e4e7;
+            --text-secondary: #a1a1aa;
+            --accent-green: #22c55e;
+            --accent-blue: #3b82f6;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --gradient-1: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --gradient-2: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.disconnected {
+            background: var(--accent-red);
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .metric-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-1);
+        }
+        
+        .metric-card.warning::before {
+            background: var(--accent-amber);
+        }
+        
+        .metric-card.danger::before {
+            background: var(--accent-red);
+        }
+        
+        .metric-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .metric-unit {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+            margin-left: 0.25rem;
+        }
+        
+        .metric-delta {
+            font-size: 0.875rem;
+            color: var(--accent-green);
+            margin-top: 0.5rem;
+        }
+        
+        .metric-delta.negative {
+            color: var(--accent-red);
+        }
+        
+        .chart-section {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .chart-title {
+            font-size: 1rem;
+            font-weight: 500;
+        }
+        
+        .chart-container {
+            height: 200px;
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .chart-bar {
+            flex: 1;
+            background: var(--accent-blue);
+            border-radius: 4px 4px 0 0;
+            min-height: 4px;
+            transition: height 0.3s ease;
+        }
+        
+        .chart-bar.fast {
+            background: var(--accent-green);
+        }
+        
+        .chart-bar.slow {
+            background: var(--accent-amber);
+        }
+        
+        .chart-bar.very-slow {
+            background: var(--accent-red);
+        }
+        
+        .log-section {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 1.5rem;
+        }
+        
+        .log-title {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+        
+        .log-container {
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.75rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        
+        .log-entry {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .log-time {
+            color: var(--text-secondary);
+        }
+        
+        .log-msg {
+            color: var(--text-primary);
+        }
+        
+        .log-msg.success {
+            color: var(--accent-green);
+        }
+        
+        .log-msg.warning {
+            color: var(--accent-amber);
+        }
+        
+        .log-msg.error {
+            color: var(--accent-red);
+        }
+        
+        footer {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>RFSN Orchestrator v8.1</h1>
+            <div class="status-badge" id="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </header>
+        
+        <div class="metrics-grid">
+            <div class="metric-card" id="firstTokenCard">
+                <div class="metric-label">First Token Latency</div>
+                <div class="metric-value">
+                    <span id="firstToken">--</span>
+                    <span class="metric-unit">ms</span>
+                </div>
+                <div class="metric-delta" id="firstTokenDelta">Target: &lt;500ms</div>
+            </div>
+            
+            <div class="metric-card" id="firstSentenceCard">
+                <div class="metric-label">First Sentence Latency</div>
+                <div class="metric-value">
+                    <span id="firstSentence">--</span>
+                    <span class="metric-unit">ms</span>
+                </div>
+                <div class="metric-delta" id="firstSentenceDelta">Target: &lt;1500ms</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-label">Total Generation</div>
+                <div class="metric-value">
+                    <span id="totalGen">--</span>
+                    <span class="metric-unit">ms</span>
+                </div>
+            </div>
+            
+            <div class="metric-card" id="queueCard">
+                <div class="metric-label">TTS Queue Size</div>
+                <div class="metric-value">
+                    <span id="queueSize">0</span>
+                    <span class="metric-unit">/ 3</span>
+                </div>
+                <div class="metric-delta">Backpressure active at 3</div>
+            </div>
+            
+            <div class="metric-card" id="droppedCard">
+                <div class="metric-label">Dropped Sentences</div>
+                <div class="metric-value">
+                    <span id="dropped">0</span>
+                </div>
+                <div class="metric-delta" id="droppedDelta">Due to backpressure</div>
+            </div>
+        </div>
+        
+        <div class="chart-section">
+            <div class="chart-header">
+                <span class="chart-title">Latency History (last 50 requests)</span>
+            </div>
+            <div class="chart-container" id="latencyChart"></div>
+        </div>
+        
+        <div class="log-section">
+            <div class="log-title">Event Log</div>
+            <div class="log-container" id="logContainer"></div>
+        </div>
+        
+        <footer>
+            RFSN GenAI Orchestrator v8.1 | WebSocket: ws://127.0.0.1:8000/ws/metrics
+        </footer>
+    </div>
+    
+    <script>
+        const MAX_HISTORY = 50;
+        const latencyHistory = [];
+        let ws = null;
+        let reconnectAttempts = 0;
+        
+        function log(msg, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const now = new Date().toLocaleTimeString();
+            entry.innerHTML = `
+                <span class="log-time">[${now}]</span>
+                <span class="log-msg ${type}">${msg}</span>
+            `;
+            
+            container.insertBefore(entry, container.firstChild);
+            
+            // Keep only last 100 entries
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+        
+        function updateStatus(connected) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            
+            if (connected) {
+                dot.classList.remove('disconnected');
+                text.textContent = 'Connected';
+            } else {
+                dot.classList.add('disconnected');
+                text.textContent = 'Disconnected';
+            }
+        }
+        
+        function updateMetrics(data) {
+            document.getElementById('firstToken').textContent = 
+                data.first_token_ms?.toFixed(0) || '--';
+            document.getElementById('firstSentence').textContent = 
+                data.first_sentence_ms?.toFixed(0) || '--';
+            document.getElementById('totalGen').textContent = 
+                data.total_generation_ms?.toFixed(0) || '--';
+            document.getElementById('queueSize').textContent = 
+                data.tts_queue_size || 0;
+            document.getElementById('dropped').textContent = 
+                data.dropped_sentences || 0;
+            
+            // Update card states
+            const firstSentenceCard = document.getElementById('firstSentenceCard');
+            const sentenceMs = data.first_sentence_ms || 0;
+            firstSentenceCard.classList.remove('warning', 'danger');
+            if (sentenceMs > 1500) {
+                firstSentenceCard.classList.add('danger');
+            } else if (sentenceMs > 1000) {
+                firstSentenceCard.classList.add('warning');
+            }
+            
+            // Update chart
+            if (data.first_sentence_ms) {
+                latencyHistory.push(data.first_sentence_ms);
+                if (latencyHistory.length > MAX_HISTORY) {
+                    latencyHistory.shift();
+                }
+                updateChart();
+            }
+            
+            // Log
+            log(`Latency: ${data.first_sentence_ms?.toFixed(0)}ms, Queue: ${data.tts_queue_size}`, 
+                sentenceMs > 1500 ? 'warning' : 'success');
+        }
+        
+        function updateChart() {
+            const container = document.getElementById('latencyChart');
+            container.innerHTML = '';
+            
+            const maxLatency = Math.max(...latencyHistory, 2000);
+            
+            latencyHistory.forEach(ms => {
+                const bar = document.createElement('div');
+                bar.className = 'chart-bar';
+                
+                const height = (ms / maxLatency) * 100;
+                bar.style.height = `${Math.max(height, 2)}%`;
+                
+                if (ms < 800) bar.classList.add('fast');
+                else if (ms < 1500) bar.classList.add('slow');
+                else bar.classList.add('very-slow');
+                
+                container.appendChild(bar);
+            });
+        }
+        
+        function connect() {
+            ws = new WebSocket('ws://127.0.0.1:8000/ws/metrics');
+            
+            ws.onopen = () => {
+                updateStatus(true);
+                reconnectAttempts = 0;
+                log('Connected to orchestrator', 'success');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'metrics') {
+                        updateMetrics(data);
+                    } else if (data.type === 'connected') {
+                        log(data.message, 'success');
+                    }
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                updateStatus(false);
+                log('Disconnected from orchestrator', 'error');
+                
+                // Reconnect with backoff
+                reconnectAttempts++;
+                const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+                log(`Reconnecting in ${delay/1000}s...`, 'warning');
+                setTimeout(connect, delay);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                log('WebSocket error', 'error');
+            };
+        }
+        
+        // Initialize
+        log('Starting dashboard...', 'info');
+        connect();
+        
+        // Populate initial chart bars
+        for (let i = 0; i < 20; i++) {
+            latencyHistory.push(0);
+        }
+        updateChart();
+    </script>
+</body>
+</html>
