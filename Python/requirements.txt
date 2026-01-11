@@ -27,3 +27,6 @@ python-dotenv==1.0.0
 
 # Static Files
 aiofiles==23.2.1
+
+# Learning Layer
+numpy>=1.24

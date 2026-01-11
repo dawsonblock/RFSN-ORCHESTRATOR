@@ -370,7 +370,7 @@ async def stream_dialogue(request: DialogueRequest):
                     contradiction_detected=False,  # Could integrate with retrieval
                     user_correction=False,  # Will be detected on next turn
                     tts_overrun=(streaming_engine.voice.metrics.dropped_sentences > 0),
-                    conversation_continued=True,  # Assume continued if we got here
+                    conversation_continued=False,  # Neutral until wired to real in-game continuation signal
                     follow_up_question=False  # Could detect from user_input
                 )
                 

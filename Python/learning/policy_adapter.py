@@ -2,6 +2,7 @@
 Policy Adapter: Feature extraction and action selection
 Uses epsilon-greedy contextual bandit with softmax linear model
 """
+import hashlib
 import numpy as np
 import json
 from pathlib import Path
@@ -10,6 +11,12 @@ from .schemas import ActionMode, FeatureVector
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def stable_bucket_id(text: str, buckets: int = 256) -> int:
+    """Compute a stable bucket ID using SHA1 (consistent across processes/restarts)"""
+    h = hashlib.sha1(text.encode("utf-8")).digest()
+    return int.from_bytes(h[:2], "big") % buckets
 
 
 class PolicyAdapter:
@@ -55,41 +62,51 @@ class PolicyAdapter:
         Returns:
             FeatureVector with 10 features
         """
-        # Hash NPC name to bucket
+        # Stable bucket for NPC identity (SHA1-based, consistent across restarts)
         npc_name = rfsn_state.get("npc_name", "unknown")
-        npc_id_hash = hash(npc_name) % 100
+        npc_bucket = stable_bucket_id(npc_name or "unknown", buckets=256)
+        # Normalize bucket to 0-1 range
+        npc_id_normalized = npc_bucket / 256.0
         
         # Extract RFSN state features
-        affinity = float(rfsn_state.get("affinity", 0.5))
-        mood = self._mood_to_int(rfsn_state.get("mood", "neutral"))
-        relationship = self._relationship_to_int(rfsn_state.get("relationship", "stranger"))
-        player_playstyle = self._playstyle_to_int(rfsn_state.get("playstyle", "balanced"))
+        affinity = float(rfsn_state.get("affinity", 0.5))  # Already 0-1
         
-        # Compute recent sentiment (simple heuristic)
+        # Normalize categorical features to 0-1 range
+        mood_int = self._mood_to_int(rfsn_state.get("mood", "neutral"))
+        mood_normalized = mood_int / 5.0  # 6 moods (0-5)
+        
+        relationship_int = self._relationship_to_int(rfsn_state.get("relationship", "stranger"))
+        relationship_normalized = relationship_int / 5.0  # 6 relationships (0-5)
+        
+        playstyle_int = self._playstyle_to_int(rfsn_state.get("playstyle", "balanced"))
+        playstyle_normalized = playstyle_int / 3.0  # 4 playstyles (0-3)
+        
+        # Recent sentiment (already -1 to 1, keep as-is)
         recent_sentiment = float(rfsn_state.get("recent_sentiment", 0.0))
         
-        # Retrieval statistics
+        # Retrieval statistics (already 0-1)
         retrieval_scores = retrieval_stats.get("top_k_scores", [])
         retrieval_topk_mean_sim = float(np.mean(retrieval_scores)) if retrieval_scores else 0.0
         retrieval_contradiction_flag = int(retrieval_stats.get("contradiction_detected", False))
         
-        # Conversation statistics
-        turn_index_in_convo = int(convo_stats.get("turn_count", 0))
+        # Conversation statistics - cap at 50, normalize to 0-1
+        raw_turn_count = int(convo_stats.get("turn_count", 0))
+        turn_index_normalized = min(raw_turn_count, 50) / 50.0
         
-        # Last action mode
-        last_action_mode = self.last_action_mode.value
+        # Last action mode - normalize to 0-1
+        last_action_normalized = self.last_action_mode.value / max(1, self.n_actions - 1)
         
         return FeatureVector(
-            npc_id_hash=npc_id_hash,
+            npc_id_hash=npc_id_normalized,
             affinity=affinity,
-            mood=mood,
-            relationship=relationship,
-            player_playstyle=player_playstyle,
+            mood=mood_normalized,
+            relationship=relationship_normalized,
+            player_playstyle=playstyle_normalized,
             recent_sentiment=recent_sentiment,
             retrieval_topk_mean_sim=retrieval_topk_mean_sim,
             retrieval_contradiction_flag=retrieval_contradiction_flag,
-            turn_index_in_convo=turn_index_in_convo,
-            last_action_mode=last_action_mode
+            turn_index_in_convo=turn_index_normalized,
+            last_action_mode=last_action_normalized
         )
     
     def choose_action_mode(self, features: FeatureVector) -> ActionMode:
