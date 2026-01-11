@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 CLOSERS = set(['"', "'", "”", "’", ")", "]", "}"])
 BOUNDARY_FLUSH_MS = 180  # flush boundary if no continuation arrives quickly
+WORKER_TIMEOUT_SEC = 0.5  # TTS worker queue timeout (Phase 2)
+QUEUE_SIZE_MIN = 1
+QUEUE_SIZE_MAX = 50
+SHUTDOWN_TIMEOUT_SEC = 5  # Worker shutdown grace period
+ABBREVIATION_PATTERN = re.compile(r'(\w+)$')  # Pre-compiled for performance
+
 
 @dataclass
 class SentenceChunk:
@@ -128,7 +134,7 @@ class StreamTokenizer:
                 
                 # Abbreviation Check
                 if char == '.' and should_split:
-                    word_match = re.search(r'(\w+)$', self.buffer[:cursor])
+                    word_match = ABBREVIATION_PATTERN.search(self.buffer[:cursor])
                     if word_match:
                         word = word_match.group(1).lower()
                         if word in self.abbreviations:
@@ -254,7 +260,7 @@ class StreamingVoiceSystem:
         while not self._shutdown:
             try:
                 # Reduced timeout to prevents stalls if queue reference changes (Patch v8.8)
-                chunk = self.speech_queue.get(timeout=0.5)
+                chunk = self.speech_queue.get(timeout=WORKER_TIMEOUT_SEC)
                 
                 # Check for sentinel (resize wakeup)
                 if chunk is self._worker_wakeup:
@@ -281,12 +287,14 @@ class StreamingVoiceSystem:
                 continue
             except Exception as e:
                 logger.error(f"TTS worker error: {e}", exc_info=True)
+                # Continue running despite errors to prevent worker death (Phase 3)
+                continue
 
     def set_max_queue_size(self, new_max: int):
         """Safely resize the queue at runtime with backlog preservation (Patch v8.8)"""
         new_max = int(new_max)
-        if new_max < 1: new_max = 1
-        if new_max > 50: new_max = 50
+        if new_max < QUEUE_SIZE_MIN: new_max = QUEUE_SIZE_MIN
+        if new_max > QUEUE_SIZE_MAX: new_max = QUEUE_SIZE_MAX
         
         with self._queue_lock:
             old_q = self.speech_queue
