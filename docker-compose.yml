@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build: .
+    container_name: rfsn-orchestrator
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist models
+      - ./Models:/app/Models
+      # Persist memory/conversations
+      - ./memory:/app/memory
+      # Config (read-only)
+      - ./config.json:/app/config.json:ro
+    environment:
+      - RFSN_ENV=production
+      - LOG_LEVEL=INFO
+      - JWT_SECRET=${JWT_SECRET:-change_me_in_production}
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/status" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
+
+  # Optional: Dashboard served by nginx
+  dashboard:
+    image: nginx:alpine
+    container_name: rfsn-dashboard
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Dashboard:/usr/share/nginx/html:ro
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+volumes:
+  models:
+  memory:

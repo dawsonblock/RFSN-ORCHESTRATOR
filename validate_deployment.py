@@ -51,12 +51,21 @@ def check_imports():
         ("streaming_engine", "StreamingVoiceSystem"),
         ("piper_tts", "PiperTTSEngine"),
         ("memory_manager", "ConversationManager"),
+        ("utils.sanitize", "safe_filename_token"),
+        ("security", "setup_security"),
+        ("orchestrator", "app"),
+        ("structured_logging", "configure_logging"),
     ]
     
     all_ok = True
     for module_name, class_name in modules:
         try:
-            module = __import__(module_name)
+            if "." in module_name:
+                import importlib
+                module = importlib.import_module(module_name)
+            else:
+                module = __import__(module_name)
+            
             cls = getattr(module, class_name)
             print(f"✅ {module_name}.{class_name}")
         except Exception as e:

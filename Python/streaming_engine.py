@@ -95,6 +95,7 @@ class StreamingVoiceSystem:
         self.metrics = StreamingMetrics()
         self._dropped_count = 0
         self._shutdown = False
+        self.audio_lock = threading.Lock()
         
         # Build abbreviation pattern for smart sentence detection
         abbrev_pattern = '|'.join(re.escape(a) for a in self.ABBREVIATIONS)
@@ -140,10 +141,25 @@ class StreamingVoiceSystem:
                 
                 self.speech_queue.task_done()
                 
+                self.speech_queue.task_done()
+                
             except queue.Empty:
                 continue
             except Exception as e:
                 logger.error(f"TTS worker error: {e}", exc_info=True)
+
+    def set_max_queue_size(self, new_max: int):
+        """Safely resize the queue at runtime"""
+        new_max = int(new_max)
+        if new_max < 1: new_max = 1
+        if new_max > 20: new_max = 20
+        
+        with self.audio_lock:
+            # Drain old queue? Or just make new one. Dropping backlog is safer/simpler for immediate effect.
+            self.speech_queue = queue.Queue(maxsize=new_max)
+            self.metrics.tts_queue_size = 0
+            self.metrics.dropped_sentences = 0
+            logger.info(f"[VoiceSystem] Resized queue to {new_max}")
     
     def _is_abbreviation_boundary(self, text: str) -> bool:
         """Check if text ends with an abbreviation (not a real sentence end)"""
@@ -325,6 +341,8 @@ class StreamingMantellaEngine:
         self.model_path = model_path
         self.llm = None
         self.voice = StreamingVoiceSystem(tts_engine="piper", max_queue_size=3)
+        self.temperature = 0.7
+        self.max_tokens = 80
         
         if model_path and Path(model_path).exists():
             self._load_model(model_path)
@@ -349,16 +367,19 @@ class StreamingMantellaEngine:
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
     
-    def generate_streaming(self, prompt: str, max_tokens: int = 80) -> Generator[SentenceChunk, None, None]:
+    def generate_streaming(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> Generator[SentenceChunk, None, None]:
         """Generate with streaming and full metrics"""
         
         if self.llm is None:
-            # Mock mode for testing
-            mock_response = "I am a Skyrim NPC. How can I help you today, traveler?"
-            for word in mock_response.split():
-                yield SentenceChunk(text=word + " ", latency_ms=50)
-                time.sleep(0.05)
-            yield SentenceChunk(text="", is_final=True, latency_ms=100)
+            # Mock token stream that flows through REAL sentence pipeline
+            def mock_tokens():
+                text = "I am a Skyrim NPC running in mock mode. I should still detection sentences, abbreviate Dr. correctly, and queue for TTS."
+                for word in text.split(" "):
+                    yield word + " "
+                    time.sleep(0.05)
+                yield ""
+            
+            yield from self.voice.process_stream(mock_tokens())
             return
         
         # Create token generator
@@ -369,7 +390,7 @@ class StreamingMantellaEngine:
                 stop=["<" + "|eot_id|>", "Player:", "User:"],
                 stream=True,
                 echo=False,
-                temperature=0.7,
+                temperature=temperature,
             )
             for chunk in stream:
                 if 'choices' in chunk and chunk['choices']:
@@ -379,6 +400,17 @@ class StreamingMantellaEngine:
         
         # Process through voice system
         yield from self.voice.process_stream(token_gen())
+
+    def apply_tuning(self, *, temperature: float = None, max_tokens: int = None, max_queue_size: int = None):
+        """Apply runtime performance settings"""
+        if temperature is not None:
+            self.temperature = float(temperature)
+        if max_tokens is not None:
+            self.max_tokens = int(max_tokens)
+        if max_queue_size is not None:
+            self.voice.set_max_queue_size(int(max_queue_size))
+        
+        logger.info(f"Tuning applied: temp={self.temperature}, tokens={self.max_tokens}")
     
     def shutdown(self):
         """Cleanup resources"""

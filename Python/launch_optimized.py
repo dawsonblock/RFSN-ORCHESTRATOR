@@ -50,7 +50,6 @@ def check_optional_dependencies():
     optional = {
         "llama_cpp": "llama-cpp-python (for LLM)",
         "piper": "piper-tts (for voice)",
-        "nltk": "nltk (for sentence detection fallback)",
     }
     
     installed = []

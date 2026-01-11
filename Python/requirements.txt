@@ -1,4 +1,4 @@
-# RFSN GenAI Orchestrator v8.1 - Python Dependencies
+# RFSN GenAI Orchestrator v8.2 - Python Dependencies
 # Production-grade with pinned versions
 
 # Web Framework
@@ -10,12 +10,8 @@ python-multipart==0.0.6
 # LLM Inference
 llama-cpp-python==0.2.56
 
-# Audio (process-safe, not sounddevice)
-pydub==0.25.1
-pyaudio==0.2.14
-
-# NLP (fallback sentence detection)
-nltk==3.8.1
+# JWT
+PyJWT==2.8.0
 
 # HTTP requests (for model downloads)
 requests==2.31.0

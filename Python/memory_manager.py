@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
+from utils.sanitize import safe_filename_token
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,10 +51,11 @@ class ConversationManager:
     
     def __init__(self, npc_name: str, memory_dir: str = "memory"):
         self.npc_name = npc_name
+        self._file_token = safe_filename_token(npc_name)
         self.memory_dir = Path(memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         
-        self.memory_file = self.memory_dir / f"{npc_name}.json"
+        self.memory_file = self.memory_dir / f"{self._file_token}.json"
         self.history: List[ConversationTurn] = []
         
         self._lock = threading.Lock()
@@ -133,7 +135,7 @@ class ConversationManager:
             
             # Create timestamped backup
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            backup_path = self.memory_dir / f"{self.npc_name}_backup_{timestamp}.json"
+            backup_path = self.memory_dir / f"{self._file_token}_backup_{timestamp}.json"
             
             try:
                 with open(backup_path, 'w') as f:
