@@ -29,6 +29,98 @@ class SentenceChunk:
     latency_ms: float = 0.0
 
 
+class StreamTokenizer:
+    """
+    State-machine based sentence splitter for streaming text.
+    Handles quotes, ellipses, and abbreviations better than regex.
+    """
+    def __init__(self):
+        self.buffer = ""
+        self.in_quotes = False
+        self.quote_char = None  # ' or "
+        
+        # Abbreviations that end in dot but shouldn't split
+        self.abbreviations = {
+            'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 
+            'mt', 'capt', 'col', 'gen', 'lt', 'sgt', 'corp', 
+            'etc', 'vs', 'inc', 'ltd', 'fig', 'no', 'op'
+        }
+    
+    def process(self, token: str) -> List[str]:
+        """
+        Process a new token and return list of completed sentences.
+        """
+        sentences = []
+        self.buffer += token
+        
+        # We only try to split if we have a reasonable buffer
+        if len(self.buffer) < 2:
+            return sentences
+            
+        cursor = 0
+        while cursor < len(self.buffer):
+            char = self.buffer[cursor]
+            
+            # Handle quotes
+            if char in ('"', '“', '”'):
+                if not self.in_quotes:
+                    self.in_quotes = True
+                    self.quote_char = char
+                elif char == self.quote_char or char in ('”', '"'): # Simple matching
+                    self.in_quotes = False
+                    self.quote_char = None
+            
+            # Check for terminator if not in quotes
+            if not self.in_quotes and char in ('.', '!', '?'):
+                # Look ahead
+                # If '...', treat as pause but keep together? 
+                if cursor + 1 >= len(self.buffer):
+                    break # Wait for more data
+                
+                next_char = self.buffer[cursor+1]
+                
+                # Check for "..."
+                if char == '.' and self.buffer[cursor:cursor+3] == '...':
+                    cursor += 2
+                    continue
+                
+                should_split = False
+                
+                # Case 1: Punctuation followed by space
+                if next_char.isspace():
+                    should_split = True
+                
+                # Abbreviation Check
+                if char == '.' and should_split:
+                    word_match = re.search(r'(\w+)$', self.buffer[:cursor])
+                    if word_match:
+                        word = word_match.group(1).lower()
+                        if word in self.abbreviations:
+                            should_split = False
+                
+                if should_split:
+                    split_idx = cursor + 1
+                    sentence = self.buffer[:split_idx].strip()
+                    if sentence:
+                        sentences.append(sentence)
+                    
+                    self.buffer = self.buffer[split_idx:]
+                    cursor = -1 # Restart scanning new buffer from 0
+            
+            cursor += 1
+            
+        return sentences
+    
+    def flush(self) -> List[str]:
+        """Flush remaining buffer as a sentence"""
+        res = []
+        if self.buffer.strip():
+            res.append(self.buffer.strip())
+        self.buffer = ""
+        self.in_quotes = False
+        return res
+
+
 @dataclass
 class StreamingMetrics:
     """Performance metrics for streaming pipeline"""
@@ -74,35 +166,24 @@ class StreamingVoiceSystem:
     - Error handling (no silent failures)
     """
     
-    ABBREVIATIONS = {
-        'Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'Sr', 'Jr', 'Lt', 'Gen', 'Col',
-        'Sgt', 'Capt', 'Cmdr', 'Adm', 'Rev', 'Hon', 'Gov', 'Rep', 'Sen',
-        'Jarl', 'Thane', 'Dragonborn', 'Dovahkiin',
-        'Inc', 'Ltd', 'Corp', 'etc', 'vs', 'St', 'Ave', 'Blvd'
-    }
     
     # Tokens that should NEVER be spoken (LLM control tokens)
     BAD_TOKENS = {
         "<" + "|eot_id|>", "<" + "|end|>", "<" + "|start_header_id|>", 
         "<" + "|end_header_id|>", "<" + "|assistant|>", "<" + "|user|>", 
-        "<" + "|system|>", "[INST]", "[/INST]"
+        "<" + "|system|>", "[INST]", "[/INST]", "</s>", "<|end|>"
     }
     
     def __init__(self, tts_engine: str = "piper", max_queue_size: int = 3):
         self.tts_engine = tts_engine
         self.speech_queue = queue.Queue(maxsize=max_queue_size)
-        self.sentence_buffer = ""
         self.metrics = StreamingMetrics()
         self._dropped_count = 0
         self._shutdown = False
         self.audio_lock = threading.Lock()
         
-        # Build abbreviation pattern for smart sentence detection
-        abbrev_pattern = '|'.join(re.escape(a) for a in self.ABBREVIATIONS)
-        self._abbrev_re = re.compile(rf'\b({abbrev_pattern})\.$')
-        
-        # Sentence boundary regex - splits on .!? followed by space and capital
-        self.sentence_regex = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+        # State machine tokenizer
+        self.tokenizer = StreamTokenizer()
         
         # Playback lock for thread safety
         self._playback_lock = threading.Lock()
@@ -114,7 +195,7 @@ class StreamingVoiceSystem:
         self.worker = threading.Thread(target=self._tts_worker, daemon=True)
         self.worker.start()
         
-        logger.info(f"[VoiceSystem] Initialized {tts_engine} with backpressure queue={max_queue_size}")
+        logger.info(f"[VoiceSystem] Initialized {tts_engine} with tokenizer=StreamTokenizer")
     
     def set_tts_engine(self, engine):
         """Set the TTS engine reference"""
@@ -161,18 +242,12 @@ class StreamingVoiceSystem:
             self.metrics.dropped_sentences = 0
             logger.info(f"[VoiceSystem] Resized queue to {new_max}")
     
-    def _is_abbreviation_boundary(self, text: str) -> bool:
-        """Check if text ends with an abbreviation (not a real sentence end)"""
-        return bool(self._abbrev_re.search(text.rstrip()))
-    
     def _clean_for_tts(self, text: str) -> str:
         """
-        Aggressive cleaning for TTS:
-        - Removes actions: *sighs*, [laughs]
+        Targeted cleaning for TTS:
+        - Removes *actions* and [stage directions]
+        - Preserves (parentheses) unless they contain only 1-2 words likely to be action?
         - Removes HTML-like tags
-        - Removes special tokens
-        - Detects code/gibberish
-        - Handles abbreviations
         """
         original = text
         
@@ -180,36 +255,30 @@ class StreamingVoiceSystem:
         for token in self.BAD_TOKENS:
             text = text.replace(token, "")
         
-        # Remove actions: *sighs*, [laughs], (whispers)
-        text = re.sub(r'[\*\[].*?[\*\]]', '', text)
-        text = re.sub(r'\(.*?\)', '', text)
+        # Remove actions: *sighs*, [laughs]
+        # Match *...*
+        text = re.sub(r'\*[^\*]+\*', '', text)
+        # Match [...]
+        text = re.sub(r'\[[^\]]+\]', '', text)
         
         # Remove HTML-like tags
         text = re.sub(r'<[^>]+>', '', text)
         
-        # Handle abbreviations: Dr. -> Dr (prevent TTS pause issues)
-        for abbrev in self.ABBREVIATIONS:
-            text = re.sub(rf'\b{abbrev}\.', abbrev, text)
-        
-        # Remove excessive whitespace
+        # Consolidate whitespace
         text = ' '.join(text.split())
         
-        # Reject if too short
-        if len(text) < 3:
-            logger.debug(f"Rejected too short: {text}")
+        # Reject if too short (unless it's a short word like "No.")
+        if len(text) < 2 and not text.isalnum():
             return ""
         
         # Reject if high code-to-text ratio (gibberish detection)
-        alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
-        if alpha_ratio < 0.4:
-            logger.warning(f"Rejected low alphabetic ratio ({alpha_ratio:.2f}): {text}")
+        # Loosened check to match reality
+        alpha_count = sum(c.isalpha() for c in text)
+        if len(text) > 20 and alpha_count / len(text) < 0.3:
+            logger.debug(f"Rejected low alpha ratio: {text}")
             return ""
-        
-        cleaned = text.strip()
-        if cleaned != original:
-            logger.debug(f"TTS clean: '{original[:50]}...' -> '{cleaned[:50]}...'")
-        
-        return cleaned
+
+        return text.strip()
     
     def _subprocess_speak(self, text: str):
         """
@@ -253,14 +322,14 @@ class StreamingVoiceSystem:
     
     def process_stream(self, token_generator: Generator[str, None, None]) -> Generator[SentenceChunk, None, None]:
         """
-        Main streaming pipeline with smart sentence detection.
-        
-        Yields complete sentences as they are detected, avoiding
-        splitting on abbreviations like "Dr." or "Jarl Balgruuf".
+        Main streaming pipeline using StreamTokenizer
         """
         start_time = time.time()
         first_token_time = None
         first_sentence_time = None
+        
+        # Clear tokenizer buffer
+        self.tokenizer = StreamTokenizer()
         
         for token in token_generator:
             if first_token_time is None:
@@ -269,54 +338,39 @@ class StreamingVoiceSystem:
             
             # Filter tokens immediately
             if token.strip() in self.BAD_TOKENS or token.strip().startswith('<|'):
-                logger.debug(f"Filtered token: {token}")
                 continue
             
-            self.sentence_buffer += token
+            # Process token through state machine
+            sentences = self.tokenizer.process(token)
             
-            # Smart sentence detection
-            match = self.sentence_regex.search(self.sentence_buffer)
-            if match and len(self.sentence_buffer) > 15:
-                # Check if this is actually an abbreviation
-                potential_split = self.sentence_buffer[:match.start() + 1]
-                if self._is_abbreviation_boundary(potential_split):
-                    # Don't split - this is an abbreviation like "Dr."
-                    continue
+            for sentence in sentences:
+                if first_sentence_time is None:
+                    first_sentence_time = time.time()
+                    self.metrics.first_sentence_ms = (first_sentence_time - start_time) * 1000
                 
-                # Extract complete sentence
-                sentences = self.sentence_regex.split(self.sentence_buffer, maxsplit=1)
-                if len(sentences) >= 2:
-                    complete_sentence = sentences[0].strip()
-                    self.sentence_buffer = sentences[1].strip() if len(sentences) > 1 else ""
-                    
-                    if first_sentence_time is None:
-                        first_sentence_time = time.time()
-                        self.metrics.first_sentence_ms = (first_sentence_time - start_time) * 1000
-                    
-                    # Queue with backpressure handling
-                    self.speak(complete_sentence)
-                    
-                    # Yield for API
-                    latency = (time.time() - start_time) * 1000
-                    yield SentenceChunk(text=complete_sentence, latency_ms=latency)
+                # Queue with backpressure handling
+                self.speak(sentence)
+                
+                # Yield for API
+                latency = (time.time() - start_time) * 1000
+                yield SentenceChunk(text=sentence, latency_ms=latency)
         
         # Handle final fragment
-        if self.sentence_buffer.strip():
-            final_sentence = self._clean_for_tts(self.sentence_buffer.strip())
-            if final_sentence:
-                self.speak(final_sentence)
-                yield SentenceChunk(
-                    text=final_sentence, 
-                    is_final=True, 
-                    latency_ms=(time.time() - start_time) * 1000
-                )
+        final_sentences = self.tokenizer.flush()
+        for sent in final_sentences:
+            self.speak(sent)
+            yield SentenceChunk(
+                text=sent, 
+                is_final=True, 
+                latency_ms=(time.time() - start_time) * 1000
+            )
         
         self.metrics.total_generation_ms = (time.time() - start_time) * 1000
         self.metrics.tts_queue_size = self.speech_queue.qsize()
     
     def flush(self):
         """Clear buffer and queue"""
-        self.sentence_buffer = ""
+        self.tokenizer = StreamTokenizer()
         while not self.speech_queue.empty():
             try:
                 self.speech_queue.get_nowait()
@@ -387,7 +441,7 @@ class StreamingMantellaEngine:
             stream = self.llm(
                 prompt,
                 max_tokens=max_tokens,
-                stop=["<" + "|eot_id|>", "Player:", "User:"],
+                stop=["<" + "|eot_id|>", "Player:", "User:", "<" + "|end|>", "</s>", "\n\nPlayer:", "\nUser:"],
                 stream=True,
                 echo=False,
                 temperature=temperature,

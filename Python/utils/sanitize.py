@@ -1,7 +1,7 @@
 # Python/utils/sanitize.py
 import re
 
-_ALLOWED = re.compile(r"[^A-Za-z0-9_-]+")
+_ALLOWED = re.compile(r"[^A-Za-z0-9_ -]+")
 
 def safe_filename_token(name: str, *, max_len: int = 64) -> str:
     """
