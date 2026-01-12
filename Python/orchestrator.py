@@ -503,7 +503,7 @@ async def health_check():
     """Operational health check (Patch v8.9)"""
     model_ok = streaming_engine is not None and streaming_engine.llm is not None
     tts_ok = piper_engine is not None
-    q_size = streaming_engine.voice.speech_queue.qsize() if streaming_engine else 0
+    q_size = len(streaming_engine.voice.speech_queue) if streaming_engine else 0
     
     return {
         "status": "healthy" if model_ok and tts_ok else "degraded",

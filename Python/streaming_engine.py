@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-RFSN Streaming Engine v8.7 - Hardened Reliability
-Fixes: sentence fragmentation, race conditions, token bleeding, backpressure
+RFSN Streaming Engine v9.0 - Thread-Safe Deque Backend
+Fixes: sentence fragmentation, race conditions via deque+Condition, token bleeding, backpressure
 """
 
 import threading
-import queue
 import re
 import time
 import logging
 from typing import Generator, Optional, List, Callable, Dict, Any
 from dataclasses import dataclass, field
 from pathlib import Path
+from streaming_voice_system import DequeSpeechQueue, VoiceChunk
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -226,21 +226,16 @@ class StreamingVoiceSystem:
     
     def __init__(self, tts_engine: str = "piper", max_queue_size: int = 3):
         self.tts_engine = tts_engine
-        self.speech_queue = queue.Queue(maxsize=max_queue_size)
+        # V9.0: Use DequeSpeechQueue instead of queue.Queue
+        self.speech_queue = DequeSpeechQueue(maxsize=max_queue_size)
         self.metrics = StreamingMetrics()
-        self._dropped_count = 0
         self._shutdown = False
-        self.audio_lock = threading.Lock()
         
         # State machine tokenizer
         self.tokenizer = StreamTokenizer()
         
         # Playback lock for thread safety
         self._playback_lock = threading.Lock()
-        
-        # Queue management locks and sentinels (Patch v8.8)
-        self._queue_lock = threading.Lock()
-        self._worker_wakeup = object()
 
         # TTS engine reference (set externally)
         self._tts_engine_ref = None
@@ -249,99 +244,47 @@ class StreamingVoiceSystem:
         self.worker = threading.Thread(target=self._tts_worker, daemon=True)
         self.worker.start()
         
-        logger.info(f"[VoiceSystem] Initialized {tts_engine} with tokenizer=StreamTokenizer")
+        logger.info(f"[VoiceSystem] Initialized {tts_engine} with tokenizer=StreamTokenizer (deque backend)")
     
     def set_tts_engine(self, engine):
         """Set the TTS engine reference"""
         self._tts_engine_ref = engine
     
     def _tts_worker(self):
-        """Thread-safe worker that processes queue"""
+        """Thread-safe worker using DequeSpeechQueue (no task_done race conditions)"""
         while not self._shutdown:
             try:
-                # Reduced timeout to prevents stalls if queue reference changes (Patch v8.8)
                 chunk = self.speech_queue.get(timeout=WORKER_TIMEOUT_SEC)
                 
-                # Check for sentinel (resize wakeup)
-                if chunk is self._worker_wakeup:
-                    self.speech_queue.task_done()
+                if chunk is None:  # Timeout or shutdown
                     continue
-
-                if chunk is None:  # Shutdown signal
-                    break
                 
                 # Clean text before TTS
                 clean_text = self._clean_for_tts(chunk.text)
                 if not clean_text:
                     logger.warning(f"Skipped empty/invalid TTS text: {chunk.text}")
-                    self.speech_queue.task_done()
                     continue
                 
                 # Thread-safe playback via subprocess
                 with self._playback_lock:
                     self._subprocess_speak(clean_text)
                 
-                self.speech_queue.task_done()
+                # Update played count
+                self.speech_queue.played_total += 1
                 
-            except queue.Empty:
-                continue
             except Exception as e:
                 logger.error(f"TTS worker error: {e}", exc_info=True)
-                # Continue running despite errors to prevent worker death (Phase 3)
                 continue
 
     def set_max_queue_size(self, new_max: int):
-        """Safely resize the queue at runtime with backlog preservation (Patch v8.8)"""
+        """Safely resize the queue at runtime (V9.0: deque handles this atomically)"""
         new_max = int(new_max)
         if new_max < QUEUE_SIZE_MIN: new_max = QUEUE_SIZE_MIN
         if new_max > QUEUE_SIZE_MAX: new_max = QUEUE_SIZE_MAX
         
-        with self._queue_lock:
-            old_q = self.speech_queue
-            old_items = []
-
-            # Drain old queue without blocking
-            while True:
-                try:
-                    x = old_q.get_nowait()
-                    if x is not self._worker_wakeup:
-                        old_items.append(x)
-                    old_q.task_done() # Mark extracted as done
-                except queue.Empty:
-                    break
-
-            # If shrinking, trim coherently while "preserving backlog"
-            if len(old_items) > new_max:
-                if new_max == 1:
-                    old_items = [old_items[-1]]  # keep most recent only
-                elif new_max == 2:
-                    old_items = [old_items[0], old_items[-1]]
-                else:
-                    # keep first + last, fill remaining from the end (most recent)
-                    keep = [old_items[0]]
-                    tail = old_items[1:-1]
-                    needed = new_max - 2
-                    keep_mid = tail[-needed:]  # most recent middle items
-                    old_items = keep + keep_mid + [old_items[-1]]
-            
-            # Create new queue
-            new_q = queue.Queue(maxsize=new_max)
-            for x in old_items:
-                try:
-                    new_q.put_nowait(x)
-                except queue.Full:
-                    break
-
-            self.speech_queue = new_q
-            logger.info(f"[VoiceSystem] Resized queue to {new_max}, preserved {len(old_items)} items")
-
-            # Wake worker: best effort push sentinel to new queue
-            try:
-                self.speech_queue.put_nowait(self._worker_wakeup)
-            except queue.Full:
-                pass
-            
-            self.metrics.tts_queue_size = self.speech_queue.qsize()
+        self.speech_queue.set_maxsize(new_max)
+        logger.info(f"[VoiceSystem] Resized queue to {new_max}")
+        self.metrics.tts_queue_size = len(self.speech_queue)
     
     def _clean_for_tts(self, text: str) -> str:
         """Targeted cleaning for TTS"""
@@ -367,61 +310,20 @@ class StreamingVoiceSystem:
         else:
             logger.info(f"[TTS-MOCK] Would speak: {text[:50]}...")
 
-    def _drop_policy(self):
-        """
-        Coherence-preserving policy (Patch 2):
-        - If queue has 1 item: drop it
-        - If 2+: drop middle, keep first (context) and last (latest)
-        """
-        items = []
-        while True:
-            try:
-                items.append(self.speech_queue.get_nowait())
-                self.speech_queue.task_done()
-            except queue.Empty:
-                break
-
-        if not items:
-            return
-
-        if len(items) == 1:
-            # Drop the only item
-            self._dropped_count += 1
-            self.metrics.dropped_sentences += 1
-            return
-
-        # Keep first and last, drop a middle item
-        mid = len(items) // 2
-        dropped_item = items.pop(mid)
-        self._dropped_count += 1
-        self.metrics.dropped_sentences += 1
-        logger.warning(f"Backpressure drop (middle): {dropped_item.text[:20]}...")
-
-        for it in items:
-            try:
-                self.speech_queue.put_nowait(it)
-            except queue.Full:
-                break # Should not happen if we just removed one
-
-    def speak(self, text: str) -> bool:
-        """Queue text for TTS with backpressure handling (Patch 2)"""
+    def speak(self, text: str, npc_id: str = "default", is_final: bool = False) -> bool:
+        """Queue text for TTS (V9.0: drop policy is handled by DequeSpeechQueue)"""
         if not text or self._shutdown:
             return False
         
-        chunk = SentenceChunk(text=text)
-        try:
-            self.speech_queue.put_nowait(chunk)
-            return True
-        except queue.Full:
-            # Backpressure: smart drop
-            self._drop_policy()
-            # Try again
-            try:
-                self.speech_queue.put_nowait(chunk)
-                return True
-            except queue.Full:
-                self.metrics.dropped_sentences += 1
-                return False
+        # DequeSpeechQueue handles backpressure internally with its drop policy
+        self.speech_queue.put(VoiceChunk(
+            text=text,
+            npc_id=npc_id,
+            created_ts=time.time(),
+            is_final=is_final
+        ))
+        self.metrics.tts_queue_size = len(self.speech_queue)
+        return True
     
     def process_stream(self, token_generator: Generator[str, None, None]) -> Generator[SentenceChunk, None, None]:
         """
@@ -469,7 +371,7 @@ class StreamingVoiceSystem:
             )
         
         self.metrics.total_generation_ms = (time.time() - start_time) * 1000
-        self.metrics.tts_queue_size = self.speech_queue.qsize()
+        self.metrics.tts_queue_size = len(self.speech_queue)
     
     def flush_pending(self):
         """Enqueue any remaining buffered text as final sentence(s)."""
@@ -478,23 +380,15 @@ class StreamingVoiceSystem:
             self.speak(s)
     
     def reset(self):
-        """Hard reset: clears queue + tokenizer + metrics."""
+        """Hard reset: clears queue + tokenizer + metrics. (V9.0: uses deque.clear())"""
         self.tokenizer = StreamTokenizer()
-        # Drain queue safely with size snapshot to avoid race conditions
-        queue_size = self.speech_queue.qsize()
-        for _ in range(queue_size):
-            try:
-                self.speech_queue.get_nowait()
-                self.speech_queue.task_done()
-            except queue.Empty:
-                break
-        self._dropped_count = 0
+        self.speech_queue.clear()
         self.metrics = StreamingMetrics()
     
     def shutdown(self):
-        """Graceful shutdown"""
+        """Graceful shutdown (V9.0: uses deque.close())"""
         self._shutdown = True
-        self.speech_queue.put(None)
+        self.speech_queue.close()
         self.worker.join(timeout=5)
         logger.info("[VoiceSystem] Shutdown complete")
 
