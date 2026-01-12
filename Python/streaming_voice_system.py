@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import logging
+import queue as _queue  # For backwards-compat exceptions
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Optional, Callable
@@ -44,6 +45,40 @@ class DequeSpeechQueue:
         self.dropped_total = 0
         self.enqueued_total = 0
         self.played_total = 0
+
+    # --- Backwards-compat API (queue.Queue-like) ---
+    
+    @property
+    def maxsize(self) -> int:
+        """Backwards-compat: queue.Queue.maxsize"""
+        with self._cv:
+            return self._maxsize
+    
+    def qsize(self) -> int:
+        """Backwards-compat: queue.Queue.qsize()"""
+        with self._cv:
+            return len(self._dq)
+    
+    def empty(self) -> bool:
+        """Backwards-compat: queue.Queue.empty()"""
+        with self._cv:
+            return len(self._dq) == 0
+    
+    def full(self) -> bool:
+        """Backwards-compat: queue.Queue.full()"""
+        with self._cv:
+            return len(self._dq) >= self._maxsize
+    
+    def put_nowait(self, item: VoiceChunk) -> None:
+        """Backwards-compat: queue.Queue.put_nowait() - never blocks"""
+        self.put(item)
+    
+    def get_nowait(self) -> VoiceChunk:
+        """Backwards-compat: queue.Queue.get_nowait() - raises queue.Empty on empty"""
+        item = self.get(timeout=0.0)
+        if item is None:
+            raise _queue.Empty
+        return item
 
     def set_maxsize(self, n: int) -> None:
         n = max(1, int(n))

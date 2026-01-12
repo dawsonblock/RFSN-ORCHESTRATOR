@@ -67,7 +67,7 @@ class TestLatencyTargets:
         
         start = time.time()
         for _ in range(100):
-            voice.flush()
+            voice.reset()  # Reset instead of flush
             list(voice.process_stream(iter(tokens)))
         elapsed_ms = (time.time() - start) * 1000
         
@@ -116,18 +116,18 @@ class TestResourceUsage:
             engine.shutdown()
     
     def test_flush_clears_resources(self):
-        """Flush should clear resources"""
+        """Reset should clear resources"""
         voice = StreamingVoiceSystem()
         
-        # Add some data
-        voice.sentence_buffer = "Some text"
+        # Add some data to tokenizer buffer
+        voice.tokenizer.buffer = "Some text"
         voice.metrics.first_token_ms = 100.0
         
         # Reset
         voice.reset()
         
-        # Should be cleared
-        assert voice.sentence_buffer == ""
+        # Should be cleared (tokenizer is recreated)
+        assert voice.tokenizer.buffer == ""
         assert voice.metrics.first_token_ms == 0.0
         
         voice.shutdown()

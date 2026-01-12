@@ -11,7 +11,9 @@ async def test_health_check_endpoint():
     with patch('orchestrator.streaming_engine') as mock_engine:
         with patch('orchestrator.piper_engine') as mock_piper:
             mock_engine.llm = MagicMock()
+            # Mock both qsize() and __len__() for DequeSpeechQueue compatibility
             mock_engine.voice.speech_queue.qsize.return_value = 5
+            mock_engine.voice.speech_queue.__len__ = MagicMock(return_value=5)
             
             res = await health_check()
             assert res['status'] == 'healthy'

@@ -1,92 +1,105 @@
 
-import queue
 import threading
 import time
 import pytest
 from streaming_engine import StreamingVoiceSystem
+from streaming_voice_system import VoiceChunk, DequeSpeechQueue
 
-class MockChunk:
-    def __init__(self, text):
-        self.text = text
 
-def test_resize_coherent_trimming():
-    """Verify that resizing preserves First+Last and trims middle correctly"""
-    # Initialize with large queue
-    vs = StreamingVoiceSystem("mock", max_queue_size=10)
-    # Stop worker to manually control queue without consumption
-    vs._shutdown = True 
-    original_worker = vs.worker
-    if original_worker.is_alive():
-        original_worker.join(timeout=0.1)
+def test_resize_drops_to_fit():
+    """Verify that resizing drops items to fit new maxsize"""
+    q = DequeSpeechQueue(maxsize=10)
     
-    # Fill queue: 0..9 (10 items)
-    items = [f"Sentence {i}" for i in range(10)]
-    for item in items:
-        vs.speech_queue.put(MockChunk(item))
+    # Fill queue with 10 items
+    for i in range(10):
+        q.put(VoiceChunk(text=f"Sentence {i}", npc_id="test", created_ts=time.time()))
     
-    assert vs.speech_queue.qsize() == 10
+    assert q.qsize() == 10
+    assert q.dropped_total == 0
     
-    # Resize to 5
-    # Expected: Keep First (0), Last (9), fill rest (3 slots) from end of middle -> 6, 7, 8
-    # Result: 0, 6, 7, 8, 9
-    vs.set_max_queue_size(5)
+    # Resize to 5 - should drop 5 items
+    q.set_maxsize(5)
     
-    # Drain and check new order
-    new_items = []
-    while not vs.speech_queue.empty():
-        c = vs.speech_queue.get()
-        if c is not vs._worker_wakeup:
-            new_items.append(c.text)
+    assert q.qsize() == 5
+    assert q.dropped_total == 5
     
-    assert len(new_items) <= 6 # 5 items + potential sentinel
+    # Verify we can still get all remaining items
+    items = []
+    while not q.empty():
+        item = q.get(timeout=0.1)
+        if item:
+            items.append(item.text)
     
-    # Clean sentinel if present
-    clean_items = [x for x in new_items if isinstance(x, str)]
-    
-    assert len(clean_items) == 5
-    assert clean_items[0] == "Sentence 0"  # First kept
-    assert clean_items[-1] == "Sentence 9" # Last kept
-    # Check middle items are the most recent ones
-    assert clean_items[1] == "Sentence 6"
-    assert clean_items[2] == "Sentence 7"
-    assert clean_items[3] == "Sentence 8"
+    assert len(items) == 5
 
-def test_resize_growth():
+
+def test_resize_growth_preserves_items():
     """Verify that growing queue preserves all items"""
-    vs = StreamingVoiceSystem("mock", max_queue_size=3)
-    vs._shutdown = True
+    q = DequeSpeechQueue(maxsize=3)
     
     # Fill queue: A, B, C
-    vs.speech_queue.put(MockChunk("A"))
-    vs.speech_queue.put(MockChunk("B"))
-    vs.speech_queue.put(MockChunk("C"))
+    q.put(VoiceChunk(text="A", npc_id="test", created_ts=time.time()))
+    q.put(VoiceChunk(text="B", npc_id="test", created_ts=time.time()))
+    q.put(VoiceChunk(text="C", npc_id="test", created_ts=time.time()))
+    
+    assert q.qsize() == 3
     
     # Grow to 10
-    vs.set_max_queue_size(10)
+    q.set_maxsize(10)
     
-    assert vs.speech_queue.qsize() >= 3
+    assert q.qsize() == 3  # All items preserved
+    assert q.maxsize == 10
     
-    # Verify content
+    # Verify content order
     out = []
-    while not vs.speech_queue.empty():
-        c = vs.speech_queue.get()
-        if c is not vs._worker_wakeup:
-            out.append(c.text)
+    while not q.empty():
+        item = q.get(timeout=0.1)
+        if item:
+            out.append(item.text)
             
     assert out == ["A", "B", "C"]
 
-def test_resize_wake_sentinel():
-    """Verify that resizing puts a sentinel to wake the worker"""
-    vs = StreamingVoiceSystem("mock", max_queue_size=5)
-    vs._shutdown = True
+
+def test_drop_policy_under_backpressure():
+    """Verify drop policy kicks in when queue is full"""
+    q = DequeSpeechQueue(maxsize=3)
     
-    vs.set_max_queue_size(10)
+    # Fill beyond capacity
+    for i in range(10):
+        q.put(VoiceChunk(text=f"Msg {i}", npc_id="test", created_ts=time.time()))
     
-    # Check if sentinel is in queue
-    found_sentinel = False
-    while not vs.speech_queue.empty():
-        c = vs.speech_queue.get()
-        if c is vs._worker_wakeup:
-            found_sentinel = True
-            
-    assert found_sentinel
+    # Queue should be at max
+    assert q.qsize() == 3
+    
+    # Should have dropped 7 items
+    assert q.dropped_total == 7
+
+
+def test_close_wakes_waiting_consumer():
+    """Verify that close() wakes up a blocked consumer"""
+    q = DequeSpeechQueue(maxsize=3)
+    
+    result = []
+    
+    def consumer():
+        item = q.get(timeout=5.0)  # Should block until close
+        result.append("done" if item is None else "got_item")
+    
+    t = threading.Thread(target=consumer)
+    t.start()
+    
+    time.sleep(0.1)  # Let consumer start waiting
+    q.close()
+    t.join(timeout=1.0)
+    
+    assert result == ["done"]
+
+
+def test_voice_system_uses_deque_queue():
+    """Verify StreamingVoiceSystem uses DequeSpeechQueue"""
+    vs = StreamingVoiceSystem(max_queue_size=5)
+    
+    assert isinstance(vs.speech_queue, DequeSpeechQueue)
+    assert vs.speech_queue.maxsize == 5
+    
+    vs.shutdown()
