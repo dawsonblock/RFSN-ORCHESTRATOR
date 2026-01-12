@@ -6,11 +6,11 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-113%20passing-success.svg)](Python/tests/)
+[![Tests](https://img.shields.io/badge/tests-139%20passing-success.svg)](Python/tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-optimized-brightgreen.svg)](Python/)
 
-*Hardened streaming engine with intelligent tokenization, backpressure management, and real-time TTS*
+*Hardened streaming engine with intelligent tokenization, thread-safe queueing, and real-time TTS*
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [API](#-api-reference) • [Performance](#-performance)
 
@@ -23,17 +23,18 @@
 ### Core Capabilities
 - **🧠 Intelligent Tokenization** - Smart sentence detection with abbreviation handling (Dr., Mr., Jarl)
 - **🎙️ Real-Time TTS** - Piper engine with streaming audio playback
-- **⚡ Backpressure Management** - Dynamic queue resizing with coherent trimming
-- **🔒 Thread-Safe** - Lock-based synchronization for concurrent operations
+- **⚡ Thread-Safe Queue** - Deque+Condition pattern eliminates race conditions
+- **🔒 Atomic Runtime** - Safe hot-reloads without half-applied config
 - **📊 Live Metrics** - WebSocket-based performance monitoring dashboard
 - **💾 Persistent Memory** - Conversation history with automatic backups
+- **🤖 Adaptive Learning** - Contextual bandit learns optimal dialogue styles per NPC
 
-### Production Hardening (v8.10)
-- ✅ **113 Tests** - Comprehensive test coverage including edge cases
-- ✅ **Zero Race Conditions** - Fixed queue draining and config snapshot issues
-- ✅ **Optimized Performance** - Pre-compiled regex, module-level constants
-- ✅ **Enhanced Reliability** - Worker error recovery, metrics cleanup, graceful shutdown
-- ✅ **Input Validation** - Queue size bounds checking, malformed input handling
+### Production Hardening (v9.0)
+- ✅ **139 Tests** - Comprehensive coverage including edge cases and learning layer
+- ✅ **Zero Race Conditions** - Deque+Condition queue pattern (no task_done/join bugs)
+- ✅ **Atomic State Swaps** - RuntimeState prevents half-applied config during reloads
+- ✅ **Single TTS Queue** - Unified backpressure (no double-buffering)
+- ✅ **Canonical Versioning** - Single source of truth for version strings
 
 ---
 
@@ -75,18 +76,18 @@ docker run -p 8000:8000 rfsn-orchestrator
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     RFSN Orchestrator                        │
+│                     RFSN Orchestrator v9.0                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
 │  │   FastAPI    │───▶│  Streaming   │───▶│  Piper TTS   │  │
-│  │   Server     │    │   Engine     │    │   Engine     │  │
+│  │   Server     │    │   Engine     │    │  (sync-only) │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
 │         │                    │                    │          │
 │         ▼                    ▼                    ▼          │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │   Memory     │    │  Tokenizer   │    │   Audio      │  │
-│  │   Manager    │    │  (Smart)     │    │   Player     │  │
+│  │   Learning   │    │ DequeSpeech  │    │   Audio      │  │
+│  │    Layer     │    │    Queue     │    │   Player     │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
 │                                                               │
 └─────────────────────────────────────────────────────────────┘
@@ -98,6 +99,9 @@ docker run -p 8000:8000 rfsn-orchestrator
 |-----------|---------|----------|
 | **Orchestrator** | FastAPI server, request handling | `Python/orchestrator.py` |
 | **Streaming Engine** | Token processing, sentence detection | `Python/streaming_engine.py` |
+| **DequeSpeechQueue** | Thread-safe bounded queue with drop policy | `Python/streaming_voice_system.py` |
+| **Learning Layer** | Contextual bandit for dialogue style selection | `Python/learning/` |
+| **Runtime State** | Atomic state management for safe reloads | `Python/runtime_state.py` |
 | **Memory Manager** | Conversation persistence, backups | `Python/memory_manager.py` |
 | **Piper TTS** | Text-to-speech synthesis | `Python/piper_tts.py` |
 | **Dashboard** | Live metrics visualization | `Dashboard/index.html` |
@@ -121,9 +125,8 @@ Content-Type: application/json
 **Response**: Server-Sent Events (SSE) stream
 
 ```
-data: {"type": "sentence", "text": "Whiterun is a great city."}
-data: {"type": "sentence", "text": "We welcome all travelers."}
-data: {"type": "done"}
+data: {"sentence": "Whiterun is a great city.", "is_final": false, "latency_ms": 150}
+data: {"sentence": "We welcome all travelers.", "is_final": true, "latency_ms": 280}
 ```
 
 ### Memory Management
@@ -147,7 +150,7 @@ Content-Type: application/json
 
 {
   "temperature": 0.7,
-  "max_tokens": 80,
+  "max_tokens": 150,
   "max_queue_size": 3
 }
 ```
@@ -175,13 +178,13 @@ WS /ws/metrics
 | TTS Processing | <100ms | ~80ms |
 | Queue Throughput | 10 items/s | 12 items/s |
 
-### Optimization Features
+### Key Optimizations
 
+- **Deque+Condition Queue** - Eliminates task_done/join race conditions
+- **Atomic Drop Policy** - Drop runs under same lock as worker get()
 - **Pre-compiled Regex** - Eliminates hot-path compilation overhead
-- **Module Constants** - Named constants for all magic numbers
-- **Queue Snapshot** - Race-free draining with `qsize()` snapshot
-- **Worker Resilience** - Explicit error recovery prevents worker death
-- **Metrics Cleanup** - Dead WebSocket connection removal prevents memory leaks
+- **Sync-Only TTS** - Single queue path prevents double-buffering
+- **Config Snapshots** - Per-request snapshots prevent mid-stream changes
 
 ---
 
@@ -196,9 +199,10 @@ python -m pytest tests/ -v
 
 ### Test Coverage
 
-- **Core Functionality**: 98 tests
-- **Edge Cases**: 15 tests
-- **Total**: 113 tests (100% passing)
+- **Core Functionality**: 105 tests
+- **Learning Layer**: 21 tests  
+- **Edge Cases**: 13 tests
+- **Total**: 139 tests (100% passing)
 
 ### Test Categories
 
@@ -206,15 +210,48 @@ python -m pytest tests/ -v
 # Unit tests
 pytest tests/test_streaming_fixes.py -v
 
-# Integration tests
-pytest tests/test_integration.py -v
+# Learning layer tests
+pytest tests/test_learning.py tests/test_learning_policy.py -v
 
 # Performance tests
 pytest tests/test_performance.py -v
 
 # Edge cases
 pytest tests/test_edge_cases.py -v
+
+# Backpressure tests
+pytest tests/test_backpressure.py -v
 ```
+
+---
+
+## 🤖 Learning Layer
+
+The system includes a lightweight contextual bandit that learns optimal dialogue styles per NPC:
+
+### Action Modes
+
+| Mode | Description |
+|------|-------------|
+| `TERSE_DIRECT` | Short, factual responses (3-4 sentences) |
+| `WARM_FRIENDLY` | Empathetic, relational responses |
+| `LORE_RICH` | Detailed world-building responses |
+| `PLAYFUL_WITTY` | Humorous, light-hearted responses |
+| `FORMAL_RESPECTFUL` | Distant, proper responses |
+| `NEUTRAL_BALANCED` | Default balanced approach |
+
+### How It Works
+
+1. **Feature Extraction** - Extracts 10 features from NPC state, conversation history, and memory retrieval
+2. **Policy Selection** - ε-greedy exploration over action modes with linear weights
+3. **Reward Learning** - Updates policy based on conversation signals (continuation, correction, follow-up)
+
+### Safety Guarantees
+
+- Learning is scoped to style selection only (not model weights)
+- Weights are bounded with decay and clipping
+- Atomic weight persistence
+- Per-NPC isolation
 
 ---
 
@@ -247,9 +284,9 @@ pytest tests/test_edge_cases.py -v
 
 ```json
 {
-  "llm_model_path": "Models/llama-3.2-3b-instruct.Q4_K_M.gguf",
+  "llm_model_path": "Models/Mantella-Skyrim-Llama-3-8B-Q4_K_M.gguf",
   "temperature": 0.7,
-  "max_tokens": 80,
+  "max_tokens": 150,
   "max_queue_size": 3,
   "piper_model": "en_US-lessac-medium",
   "log_level": "INFO"
@@ -273,20 +310,27 @@ export RFSN_LOG_LEVEL=DEBUG
 ```
 RFSN-ORCHESTRATOR/
 ├── Python/
-│   ├── orchestrator.py          # FastAPI server
-│   ├── streaming_engine.py      # Core streaming logic
-│   ├── memory_manager.py        # Conversation persistence
-│   ├── piper_tts.py            # TTS engine
-│   ├── security.py             # Authentication
-│   ├── prometheus_metrics.py   # Metrics collection
-│   ├── requirements.txt        # Dependencies
-│   └── tests/                  # Test suite (113 tests)
+│   ├── orchestrator.py           # FastAPI server
+│   ├── streaming_engine.py       # Core streaming logic
+│   ├── streaming_voice_system.py # DequeSpeechQueue (thread-safe)
+│   ├── runtime_state.py          # Atomic runtime management
+│   ├── version.py                # Canonical version strings
+│   ├── memory_manager.py         # Conversation persistence
+│   ├── piper_tts.py              # TTS engine
+│   ├── security.py               # Authentication
+│   ├── learning/                 # Contextual bandit layer
+│   │   ├── schemas.py            # ActionMode definitions
+│   │   ├── policy_adapter.py     # Feature extraction + action selection
+│   │   ├── reward_model.py       # Reward computation
+│   │   └── trainer.py            # Online weight updates
+│   ├── requirements.txt          # Dependencies
+│   └── tests/                    # Test suite (139 tests)
 ├── Dashboard/
-│   └── index.html              # Metrics dashboard
+│   └── index.html                # Metrics dashboard
 ├── Models/
-│   └── piper/                  # Voice models
-├── config.json                 # Configuration
-└── README.md                   # This file
+│   └── piper/                    # Voice models
+├── config.json                   # Configuration
+└── README.md                     # This file
 ```
 
 ### Contributing
@@ -302,7 +346,16 @@ RFSN-ORCHESTRATOR/
 
 ## 📈 Changelog
 
-### v8.10 (Latest) - Critical Bug Fixes
+### v9.0 (Latest) - Thread-Safe Queue Rewrite
+- **Deque+Condition queue** replaces queue.Queue (eliminates race conditions)
+- Removed all task_done/join semantics
+- Drop policy runs atomically with consumer
+- Added `RuntimeState` for atomic config swaps
+- Added `version.py` for canonical versioning
+- Removed dead code (StreamingVoiceSystemV2)
+- Added `enable_queue` flag to Piper TTS
+
+### v8.10 - Critical Bug Fixes
 - Fixed `/ws/metrics` crash (missing `asdict` import)
 - Corrected end-of-stream flush semantics
 - Renamed `flush()` → `reset()`, added `flush_pending()`
