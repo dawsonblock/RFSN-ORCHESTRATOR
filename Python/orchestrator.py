@@ -38,6 +38,16 @@ from xvasynth_engine import XVASynthEngine
 
 # Import learning layer
 from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog
+from learning.learning_contract import (
+    LearningContract, LearningConstraints, StateSnapshot,
+    LearningUpdate, EvidenceType, WriteGateError
+)
+from memory_governance import MemoryGovernance, GovernedMemory, MemoryType, MemorySource
+from intent_extraction import IntentGate, IntentExtractor, IntentType, SafetyFlag
+from streaming_pipeline import StreamingPipeline, BoundedQueue, DropPolicy
+from observability import StructuredLogger, MetricsCollector, TraceContext
+from event_recorder import EventRecorder, EventType
+from state_machine import StateMachine, RFSNStateMachine
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -106,6 +116,14 @@ conversation_managers_lock = asyncio.Lock()
 policy_adapter: Optional[PolicyAdapter] = None
 reward_model: Optional[RewardModel] = None
 trainer: Optional[Trainer] = None
+learning_contract: Optional[LearningContract] = None
+memory_governance: Optional[MemoryGovernance] = None
+intent_gate: Optional[IntentGate] = None
+streaming_pipeline: Optional[StreamingPipeline] = None
+structured_logger: Optional[StructuredLogger] = None
+metrics_collector: Optional[MetricsCollector] = None
+event_recorder: Optional[EventRecorder] = None
+state_machine: Optional[StateMachine] = None
 
 
 @app.on_event("startup")
@@ -161,11 +179,54 @@ async def startup_event():
     api_key_manager._load_keys()
     
     # Initialize learning layer
-    global policy_adapter, reward_model, trainer
+    global policy_adapter, reward_model, trainer, learning_contract, memory_governance, intent_gate
+    global streaming_pipeline, structured_logger, metrics_collector, event_recorder, state_machine
     policy_adapter = PolicyAdapter(epsilon=0.08)
     reward_model = RewardModel()
     trainer = Trainer(learning_rate=0.05, decay_rate=0.9999)
-    logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer)")
+    
+    # Initialize LearningContract with constraints
+    constraints = LearningConstraints(
+        max_step_size=0.1,
+        cooldown_seconds=5.0,
+        required_evidence_types=["user_correction", "conversation_continued"]
+    )
+    learning_contract = LearningContract(
+        constraints=constraints,
+        snapshot_dir=Path(__file__).parent.parent / "data" / "learning" / "snapshots"
+    )
+    
+    # Initialize MemoryGovernance
+    memory_governance = MemoryGovernance(
+        storage_path=Path(__file__).parent.parent / "data" / "memory" / "governed"
+    )
+    
+    # Initialize IntentGate for LLM output validation
+    intent_gate = IntentGate(
+        block_unsafe=True,
+        require_min_confidence=0.3
+    )
+    
+    # Initialize StreamingPipeline for message delivery guarantees
+    streaming_pipeline = StreamingPipeline(
+        max_queue_size=50,
+        drop_policy=DropPolicy.DROP_NEWEST,
+        timeout_seconds=30
+    )
+    
+    # Initialize Observability components
+    structured_logger = StructuredLogger(service_name="rfsn-orchestrator")
+    metrics_collector = MetricsCollector()
+    
+    # Initialize EventRecorder for deterministic replay
+    event_recorder = EventRecorder(
+        session_id=str(int(time.time())),
+        output_dir=Path(__file__).parent.parent / "data" / "recordings"
+    )
+    
+    # Initialize StateMachine for RFSN state invariants
+    state_machine = RFSNStateMachine()
+    logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer, LearningContract, MemoryGovernance, IntentGate, StreamingPipeline, Observability, EventRecorder, StateMachine)")
     
     # Swap engines into RuntimeState atomically (Patch 1: atomic engine pointers)
     runtime.swap(RuntimeState(
@@ -174,7 +235,14 @@ async def startup_event():
         xva_engine=xva_engine,
         policy_adapter=policy_adapter,
         trainer=trainer,
-        reward_model=reward_model
+        reward_model=reward_model,
+        learning_contract=learning_contract,
+        memory_governance=memory_governance,
+        intent_gate=intent_gate,
+        streaming_pipeline=streaming_pipeline,
+        observability=structured_logger,
+        event_recorder=event_recorder,
+        state_machine=state_machine
     ))
     logger.info("Runtime state initialized atomically")
 
@@ -359,6 +427,35 @@ async def stream_dialogue(request: DialogueRequest):
         first_chunk_sent = False
         start_gen = time.time()
         
+        # Validate LLM output through IntentGate
+        def validate_llm_output(text: str) -> str:
+            """Validate and filter LLM output through IntentGate"""
+            if not intent_gate:
+                return text
+            
+            # Extract intent from the text
+            proposal = intent_gate.extractor.extract(text)
+            
+            # Check for harmful safety flags
+            harmful_flags = {
+                SafetyFlag.HARMFUL_CONTENT,
+                SafetyFlag.AGGRESSION,
+                SafetyFlag.SELF_HARM,
+                SafetyFlag.ILLEGAL_ACTION
+            }
+            
+            filtered_text = text
+            if any(flag in proposal.safety_flags for flag in harmful_flags):
+                logger.warning(f"IntentGate blocked content with safety flags: {proposal.safety_flags}")
+                # For safety, return empty string if harmful content detected
+                return ""
+            
+            # Filter low-confidence content
+            if proposal.confidence < intent_gate.require_min_confidence:
+                logger.debug(f"IntentGate filtered low-confidence content (conf={proposal.confidence})")
+            
+            return filtered_text
+        
         try:
             # Use snapshot values
             for chunk in streaming_engine.generate_streaming(full_prompt, max_tokens=snapshot_max_tokens, temperature=snapshot_temp):
@@ -369,8 +466,17 @@ async def stream_dialogue(request: DialogueRequest):
                     observe_first_token(latency)
                     logger.info(f"First token: {latency*1000:.0f}ms")
                 
-                # Stream cleaned text to SSE (Patch v8.9) - cleanup for display
-                clean_text = _cleanup_tokens(chunk.text)
+                # Record user input event
+                if event_recorder:
+                    event_recorder.record(
+                        EventType.USER_INPUT,
+                        {"text": request.user_input, "npc_name": npc_name}
+                    )
+                
+                # Validate and clean text through IntentGate
+                validated_text = validate_llm_output(chunk.text)
+                clean_text = _cleanup_tokens(validated_text)
+                
                 if clean_text:  # Only send non-empty cleaned text
                     yield f"data: {json.dumps({'sentence': clean_text, 'is_final': chunk.is_final, 'latency_ms': chunk.latency_ms})}\n\n"
                 full_response += clean_text  # Cleaned accumulator for memory
@@ -380,6 +486,31 @@ async def stream_dialogue(request: DialogueRequest):
                 
                 if chunk.is_final and config_watcher.get("memory_enabled"):
                     memory.add_turn(request.user_input, full_response)
+                    
+                    # Record LLM generation event
+                    if event_recorder:
+                        event_recorder.record(
+                            EventType.LLM_GENERATION,
+                            {"prompt": full_prompt, "response": full_response}
+                        )
+                    
+                    # Also add to MemoryGovernance for provenance tracking
+                    if memory_governance:
+                        governed_memory = GovernedMemory(
+                            memory_id="",
+                            memory_type=MemoryType.CONVERSATION_TURN,
+                            source=MemorySource.NPC_RESPONSE,
+                            content=full_response,
+                            confidence=1.0,  # Direct NPC response
+                            timestamp=datetime.utcnow(),
+                            metadata={
+                                "npc_name": npc_name,
+                                "user_input": request.user_input,
+                                "action_mode": action_mode.name if action_mode else None
+                            }
+                        )
+                        memory_governance.add_memory(governed_memory)
+                    
                     # Process emotion on final full response
                     emotion_info = multi_manager.process_response(npc_name, full_response)
                     logger.info(f"NPC {npc_name} emotion: {emotion_info['emotion']['primary']}")
@@ -418,11 +549,37 @@ async def stream_dialogue(request: DialogueRequest):
                 # Compute reward
                 reward = reward_model.compute(signals)
                 
-                # Update policy weights
-                policy_adapter.weights = trainer.update(
+                # Create LearningUpdate for policy weights
+                new_weights = trainer.update(
                     policy_adapter.weights, features, action_mode, reward
                 )
                 
+                learning_update = LearningUpdate(
+                    field_name="policy_weights",
+                    old_value=policy_adapter.weights.copy(),
+                    new_value=new_weights,
+                    evidence_types=[
+                        EvidenceType.USER_CORRECTION if user_correction else EvidenceType.CONTINUED_CONVERSATION,
+                        EvidenceType.FOLLOW_UP_QUESTION if follow_up_question else EvidenceType.CONTINUED_CONVERSATION
+                    ],
+                    confidence=abs(reward),  # Use reward magnitude as confidence
+                    source="learner"
+                )
+                
+                # Apply update through LearningContract
+                try:
+                    learning_contract.apply_update(learning_update)
+                    policy_adapter.weights = new_weights
+                except WriteGateError as e:
+                    logger.warning(f"LearningContract rejected update: {e}")
+
+                # Record learning update event
+                if event_recorder:
+                    event_recorder.record(
+                        EventType.LEARNING_UPDATE,
+                        {"reward": reward, "action_mode": action_mode.name}
+                    )
+
                 # Log turn
                 turn_log = TurnLog.create(npc_name, features, action_mode, reward, signals)
                 trainer.log_turn(turn_log)

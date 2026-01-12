@@ -32,9 +32,16 @@ class RuntimeState:
     policy_adapter: Optional[Any] = None
     trainer: Optional[Any] = None
     reward_model: Optional[Any] = None
+    learning_contract: Optional[Any] = None
     
     # Memory/retrieval
     memory_manager: Optional[Any] = None
+    memory_governance: Optional[Any] = None
+    intent_gate: Optional[Any] = None
+    streaming_pipeline: Optional[Any] = None
+    observability: Optional[Any] = None
+    event_recorder: Optional[Any] = None
+    state_machine: Optional[Any] = None
     
     # Hot config overlay
     hot_config: Optional[Any] = None
@@ -118,7 +125,14 @@ class Runtime:
                 policy_adapter=kwargs.get('policy_adapter', current.policy_adapter),
                 trainer=kwargs.get('trainer', current.trainer),
                 reward_model=kwargs.get('reward_model', current.reward_model),
+                learning_contract=kwargs.get('learning_contract', current.learning_contract),
                 memory_manager=kwargs.get('memory_manager', current.memory_manager),
+                memory_governance=kwargs.get('memory_governance', current.memory_governance),
+                intent_gate=kwargs.get('intent_gate', current.intent_gate),
+                streaming_pipeline=kwargs.get('streaming_pipeline', current.streaming_pipeline),
+                observability=kwargs.get('observability', current.observability),
+                event_recorder=kwargs.get('event_recorder', current.event_recorder),
+                state_machine=kwargs.get('state_machine', current.state_machine),
                 hot_config=kwargs.get('hot_config', current.hot_config),
             )
             self._state = new_state

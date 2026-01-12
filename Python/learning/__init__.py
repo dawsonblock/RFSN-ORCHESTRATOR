@@ -12,6 +12,14 @@ from .schemas import (
 from .policy_adapter import PolicyAdapter
 from .reward_model import RewardModel
 from .trainer import Trainer
+from .learning_contract import (
+    LearningContract,
+    LearningConstraints,
+    LearningUpdate,
+    StateSnapshot,
+    EvidenceType,
+    WriteGateError
+)
 
 __all__ = [
     'ActionMode',
@@ -20,5 +28,11 @@ __all__ = [
     'RewardSignals',
     'PolicyAdapter',
     'RewardModel',
-    'Trainer'
+    'Trainer',
+    'LearningContract',
+    'LearningConstraints',
+    'LearningUpdate',
+    'StateSnapshot',
+    'EvidenceType',
+    'WriteGateError'
 ]
