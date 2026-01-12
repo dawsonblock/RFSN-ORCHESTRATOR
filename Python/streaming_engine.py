@@ -549,10 +549,9 @@ class StreamingMantellaEngine:
             stream = self.llm(
                 prompt,
                 max_tokens=max_tokens,
-                stop=[
-                    "<" + "|eot_id|>", "<" + "|end|>", "</s>", 
-                    "\nPlayer:", "\nUser:", "\nYou:", "\nNPC:", "Player:", "User:"
-                ],
+                stop=["<|eot_id|>", "<|end|>", "</s>", 
+                    "\nPlayer:", "\nUser:", "\nYou:", "\nNPC:", "Player:", "User:",
+                    "\nSystem:", "System:", "[SYSTEM MODE:", "**System:"],
                 stream=True,
                 echo=False,
                 temperature=temperature,

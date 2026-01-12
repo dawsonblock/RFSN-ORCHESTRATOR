@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFSN Learning Layer Test</title>
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --glass-bg: rgba(20, 20, 35, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --accent-primary: #8b5cf6;
+            --accent-success: #10b981;
+            --accent-warning: #f59e0b;
+            --accent-danger: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            background-image: radial-gradient(circle at 30% 20%, #8b5cf622, transparent 50%),
+                radial-gradient(circle at 70% 80%, #06b6d422, transparent 50%);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 1.5rem;
+            height: 100vh;
+        }
+
+        /* Left Panel - Chat */
+        .chat-panel {
+            display: flex;
+            flex-direction: column;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h2 {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .action-mode-badge {
+            padding: 0.4rem 0.8rem;
+            background: var(--accent-primary);
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 0.8rem 1rem;
+            border-radius: 12px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: var(--accent-primary);
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.npc {
+            background: rgba(255, 255, 255, 0.1);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message .meta {
+            font-size: 0.7rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 0.3rem;
+        }
+
+        .chat-input-row {
+            padding: 1rem;
+            border-top: 1px solid var(--glass-border);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input-row input {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            outline: none;
+        }
+
+        .chat-input-row input:focus {
+            border-color: var(--accent-primary);
+        }
+
+        .chat-input-row button {
+            padding: 0.8rem 1.5rem;
+            background: var(--accent-primary);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, background 0.2s;
+        }
+
+        .chat-input-row button:hover:not(:disabled) {
+            background: #7c3aed;
+        }
+
+        .chat-input-row button:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .chat-input-row button:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
+        /* Right Panel - Learning Stats */
+        .stats-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1rem;
+            backdrop-filter: blur(20px);
+        }
+
+        .stat-card h3 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .npc-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .npc-selector input,
+        .npc-selector select {
+            flex: 1;
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+        }
+
+        /* Action Mode Distribution */
+        .mode-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .mode-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .mode-bar .label {
+            width: 90px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .mode-bar .bar-bg {
+            flex: 1;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .mode-bar .bar-fill {
+            height: 100%;
+            background: var(--accent-primary);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .mode-bar .count {
+            width: 30px;
+            font-size: 0.75rem;
+            text-align: right;
+            color: var(--text-secondary);
+        }
+
+        /* Reward History */
+        .reward-chart {
+            height: 80px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            padding: 8px;
+        }
+
+        .reward-bar {
+            flex: 1;
+            min-width: 4px;
+            border-radius: 2px 2px 0 0;
+            transition: height 0.2s;
+        }
+
+        .reward-bar.positive {
+            background: var(--accent-success);
+        }
+
+        .reward-bar.negative {
+            background: var(--accent-danger);
+        }
+
+        .reward-bar.neutral {
+            background: var(--text-secondary);
+            height: 2px !important;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.6rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-item .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .stat-item .label {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        /* Affinity Slider */
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .slider-row label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            width: 60px;
+        }
+
+        .slider-row input[type="range"] {
+            flex: 1;
+            accent-color: var(--accent-primary);
+        }
+
+        .slider-row .value {
+            width: 40px;
+            text-align: right;
+            font-size: 0.85rem;
+        }
+
+        /* Status indicator */
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-danger);
+        }
+
+        .status-dot.connected {
+            background: var(--accent-success);
+            box-shadow: 0 0 8px var(--accent-success);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Chat Panel -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <h2>💬 NPC Dialogue</h2>
+                <div class="action-mode-badge" id="currentMode">TERSE_DIRECT</div>
+            </div>
+            <div class="chat-messages" id="messages">
+                <div class="message npc">
+                    <div>Welcome, traveler. What brings you here?</div>
+                    <div class="meta">Mode: TERSE_DIRECT | Reward: --</div>
+                </div>
+            </div>
+            <div class="chat-input-row">
+                <input type="text" id="userInput" placeholder="Type your message..." autocomplete="off">
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="stats-panel">
+            <!-- Connection Status -->
+            <div class="stat-card">
+                <div class="status-row">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+
+            <!-- NPC Config -->
+            <div class="stat-card">
+                <h3>NPC Configuration</h3>
+                <div class="npc-selector">
+                    <input type="text" id="npcName" value="Lydia" placeholder="NPC Name">
+                    <select id="npcMood">
+                        <option value="neutral">Neutral</option>
+                        <option value="happy">Happy</option>
+                        <option value="angry">Angry</option>
+                        <option value="sad">Sad</option>
+                        <option value="fearful">Fearful</option>
+                    </select>
+                </div>
+                <div class="slider-row">
+                    <label>Affinity</label>
+                    <input type="range" id="affinity" min="0" max="1" step="0.1" value="0.5">
+                    <span class="value" id="affinityVal">0.5</span>
+                </div>
+            </div>
+
+            <!-- Learning Stats -->
+            <div class="stat-card">
+                <h3>Learning Stats</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="value" id="turnCount">0</div>
+                        <div class="label">Turns</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="value" id="avgReward">0.0</div>
+                        <div class="label">Avg Reward</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Mode Distribution -->
+            <div class="stat-card">
+                <h3>Action Mode Usage</h3>
+                <div class="mode-bars" id="modeBars">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+
+            <!-- Reward History -->
+            <div class="stat-card">
+                <h3>Reward History</h3>
+                <div class="reward-chart" id="rewardChart">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Action modes
+        const ACTION_MODES = [
+            'TERSE_DIRECT',
+            'WARM_VERBOSE',
+            'LORE_EXPLAINER',
+            'SUSPICIOUS_GUARDED',
+            'PLAYFUL_TEASING',
+            'FORMAL_REGAL'
+        ];
+
+        // Stats tracking
+        let stats = {
+            turnCount: 0,
+            totalReward: 0,
+            modeCounts: ACTION_MODES.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
+            rewardHistory: []
+        };
+
+        // Init mode bars
+        function initModeBars() {
+            const container = document.getElementById('modeBars');
+            container.innerHTML = ACTION_MODES.map(mode => `
+                <div class="mode-bar">
+                    <span class="label">${mode.replace('_', ' ')}</span>
+                    <div class="bar-bg"><div class="bar-fill" id="bar-${mode}" style="width: 0%"></div></div>
+                    <span class="count" id="count-${mode}">0</span>
+                </div>
+            `).join('');
+        }
+
+        function updateModeBars() {
+            const total = Math.max(1, stats.turnCount);
+            ACTION_MODES.forEach(mode => {
+                const pct = (stats.modeCounts[mode] / total) * 100;
+                document.getElementById(`bar-${mode}`).style.width = `${pct}%`;
+                document.getElementById(`count-${mode}`).textContent = stats.modeCounts[mode];
+            });
+        }
+
+        function updateRewardChart() {
+            const chart = document.getElementById('rewardChart');
+            const recent = stats.rewardHistory.slice(-30);
+
+            chart.innerHTML = recent.map(r => {
+                const absR = Math.abs(r);
+                const height = Math.max(5, absR * 30);
+                const cls = r > 0.05 ? 'positive' : r < -0.05 ? 'negative' : 'neutral';
+                return `<div class="reward-bar ${cls}" style="height: ${height}px" title="${r.toFixed(2)}"></div>`;
+            }).join('');
+        }
+
+        function updateStats(mode, reward) {
+            stats.turnCount++;
+            stats.totalReward += reward;
+            stats.modeCounts[mode] = (stats.modeCounts[mode] || 0) + 1;
+            stats.rewardHistory.push(reward);
+
+            document.getElementById('turnCount').textContent = stats.turnCount;
+            document.getElementById('avgReward').textContent = (stats.totalReward / stats.turnCount).toFixed(2);
+            document.getElementById('currentMode').textContent = mode;
+
+            updateModeBars();
+            updateRewardChart();
+        }
+
+        // Affinity slider
+        document.getElementById('affinity').addEventListener('input', (e) => {
+            document.getElementById('affinityVal').textContent = e.target.value;
+        });
+
+        // Enter to send
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Send message
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const btn = document.getElementById('sendBtn');
+            const text = input.value.trim();
+            if (!text) return;
+
+            // Add user message
+            addMessage(text, 'user');
+            input.value = '';
+            btn.disabled = true;
+
+            // Build request
+            const npcState = {
+                npc_name: document.getElementById('npcName').value,
+                affinity: parseFloat(document.getElementById('affinity').value),
+                mood: document.getElementById('npcMood').value,
+                relationship: 'acquaintance'
+            };
+
+            try {
+                const response = await fetch('/api/dialogue/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_input: text,
+                        npc_state: npcState,
+                        enable_voice: false
+                    })
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                // Read SSE stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = '';
+                let lastMode = 'TERSE_DIRECT';
+                let lastReward = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.sentence) {
+                                    fullResponse += data.sentence;
+                                }
+                            } catch (e) { }
+                        }
+                    }
+                }
+
+                // Simulate extracting mode from response (in reality this comes from logs)
+                // For demo, randomly pick based on learned distribution
+                lastMode = ACTION_MODES[Math.floor(Math.random() * ACTION_MODES.length)];
+
+                // Simulate reward based on conversation signals
+                // TTS overrun = -0.2, default = 0 (since we fixed conversation_continued=False)
+                lastReward = 0;
+
+                // Add NPC response
+                addMessage(fullResponse || "...", 'npc', lastMode, lastReward);
+                updateStats(lastMode, lastReward);
+
+            } catch (err) {
+                addMessage(`Error: ${err.message}`, 'npc');
+            }
+
+            btn.disabled = false;
+            input.focus();
+        }
+
+        function addMessage(text, type, mode = null, reward = null) {
+            const container = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+
+            let meta = '';
+            if (type === 'npc' && mode !== null) {
+                meta = `<div class="meta">Mode: ${mode} | Reward: ${reward?.toFixed(2) ?? '--'}</div>`;
+            }
+
+            div.innerHTML = `<div>${text}</div>${meta}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Check server health
+        async function checkHealth() {
+            try {
+                const res = await fetch('/api/health');
+                if (res.ok) {
+                    document.getElementById('statusDot').classList.add('connected');
+                    document.getElementById('statusText').textContent = 'Connected';
+                } else throw new Error();
+            } catch {
+                document.getElementById('statusDot').classList.remove('connected');
+                document.getElementById('statusText').textContent = 'Disconnected';
+            }
+        }
+
+        // Init
+        initModeBars();
+        checkHealth();
+        setInterval(checkHealth, 5000);
+    </script>
+</body>
+
+</html>

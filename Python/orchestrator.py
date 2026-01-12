@@ -227,10 +227,29 @@ async def broadcast_metrics(metrics: StreamingMetrics):
 
 
 def _cleanup_tokens(text: str) -> str:
-    """Remove special tokens that might slip through"""
+    """Remove special tokens and system prompt leakage that might slip through"""
     bad_tokens = ["<|eot_id|>", "<|end|>", "<|"]
     for token in bad_tokens:
         text = text.replace(token, "")
+    
+    # Remove system prompt leakage patterns
+    import re
+    # Remove **System: ... ** blocks
+    text = re.sub(r'\*\*System:.*?\*\*', '', text, flags=re.DOTALL)
+    # Remove [SYSTEM MODE: ...] blocks including content until next sentence
+    text = re.sub(r'\[SYSTEM MODE:[^\]]*\][^.!?]*', '', text, flags=re.DOTALL)
+    # Remove ``` code blocks
+    text = re.sub(r'```[^`]*```', '', text, flags=re.DOTALL)
+    # Remove bare ``` markers
+    text = text.replace('```', '')
+    # Remove leading ** or trailing **
+    text = re.sub(r'^\*+\s*', '', text)
+    text = re.sub(r'\s*\*+$', '', text)
+    # Clean up any "System:" prefix that leaks
+    text = re.sub(r'^\s*System:\s*', '', text)
+    # Clean up markdown bold around the text
+    text = text.replace('**', '')
+    
     return text.strip()
 
 
@@ -307,7 +326,7 @@ async def stream_dialogue(request: DialogueRequest):
     
     # Build prompt with context compression and action mode injection
     history = memory.get_context_window(limit=config_watcher.get("context_limit", 4)) if config_watcher.get("memory_enabled") else ""
-    system_prompt = f"You are {state.npc_name}. {state.get_attitude_instruction()} Keep it short (1-2 sentences)."
+    system_prompt = f"You are {state.npc_name}. {state.get_attitude_instruction()}"
     
     # Inject action mode control block
     if policy_adapter:
@@ -336,9 +355,11 @@ async def stream_dialogue(request: DialogueRequest):
                     observe_first_token(latency)
                     logger.info(f"First token: {latency*1000:.0f}ms")
                 
-                # Stream Raw Text to SSE (Patch v8.9) - cleanup is for TTS only
-                yield f"data: {json.dumps({'sentence': chunk.text, 'is_final': chunk.is_final, 'latency_ms': chunk.latency_ms})}\n\n"
-                full_response += chunk.text # Raw accumulator for memory
+                # Stream cleaned text to SSE (Patch v8.9) - cleanup for display
+                clean_text = _cleanup_tokens(chunk.text)
+                if clean_text:  # Only send non-empty cleaned text
+                    yield f"data: {json.dumps({'sentence': clean_text, 'is_final': chunk.is_final, 'latency_ms': chunk.latency_ms})}\n\n"
+                full_response += clean_text  # Cleaned accumulator for memory
                 
                 # Token metrics
                 inc_tokens(len(chunk.text.split())) # Rough estimate

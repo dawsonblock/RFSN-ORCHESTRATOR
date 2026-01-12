@@ -5,7 +5,7 @@
   "memory_enabled": true,
   "max_queue_size": 1,
   "temperature": 0.1,
-  "max_tokens": 5,
+  "max_tokens": 150,
   "context_limit": 4,
   "server": {
     "host": "127.0.0.1",

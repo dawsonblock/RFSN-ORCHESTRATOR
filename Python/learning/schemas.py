@@ -21,10 +21,10 @@ class ActionMode(Enum):
         """Get prompt control block for this action mode"""
         injections = {
             ActionMode.TERSE_DIRECT: """[ACTION MODE: TERSE_DIRECT]
-- Keep responses under 2 sentences
-- Be direct and instructional
-- Minimize emotional language
-- Focus on facts and actions""",
+- Keep responses to 3-4 sentences
+- Be direct and clear
+- Focus on facts and actions
+- Answer the question fully""",
             
             ActionMode.WARM_SUPPORTIVE: """[ACTION MODE: WARM_SUPPORTIVE]
 - Show empathy and understanding
