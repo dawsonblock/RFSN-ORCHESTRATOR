@@ -4,6 +4,7 @@ RFSN GenAI Orchestrator - Production Streaming Build
 Complete system with Piper/xVASynth TTS, security, metrics, and multi-NPC support.
 """
 from version import ORCHESTRATOR_VERSION, STREAMING_ENGINE_VERSION, get_version_string
+from runtime_state import Runtime, RuntimeState
 
 import asyncio
 import json
@@ -77,9 +78,9 @@ class PerformanceSettings(BaseModel):
 
 # FastAPI App
 app = FastAPI(
-    title="RFSN GenAI Orchestrator v8.2",
+    title=f"RFSN GenAI Orchestrator v{ORCHESTRATOR_VERSION}",
     description="Production-hardened streaming system with Security, Metrics, and Multi-NPC capabilities",
-    version="8.2.0"
+    version=ORCHESTRATOR_VERSION
 )
 
 # Setup Security (CORS + Rate Limiting)
@@ -91,7 +92,8 @@ app.add_middleware(RequestLoggingMiddleware)
 # Include Prometheus Metrics
 app.include_router(metrics_router, tags=["monitoring"])
 
-# Global instances
+# Global instances - wrapped by runtime for atomic swaps
+runtime = Runtime()
 streaming_engine: Optional[StreamingMantellaEngine] = None
 piper_engine: Optional[PiperTTSEngine] = None
 xva_engine: Optional[XVASynthEngine] = None
@@ -164,6 +166,17 @@ async def startup_event():
     reward_model = RewardModel()
     trainer = Trainer(learning_rate=0.05, decay_rate=0.9999)
     logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer)")
+    
+    # Swap engines into RuntimeState atomically (Patch 1: atomic engine pointers)
+    runtime.swap(RuntimeState(
+        streaming_engine=streaming_engine,
+        piper_engine=piper_engine,
+        xva_engine=xva_engine,
+        policy_adapter=policy_adapter,
+        trainer=trainer,
+        reward_model=reward_model
+    ))
+    logger.info("Runtime state initialized atomically")
 
     # Generate initial API Key if missing
     if not API_KEYS_PATH.exists():
@@ -387,13 +400,19 @@ async def stream_dialogue(request: DialogueRequest):
         # CALL SITE B: Compute reward and update policy (Learning Layer)
         if policy_adapter and features and trainer:
             try:
-                # Detect reward signals
+                # Detect reward signals using RewardModel methods (Patch 4: real reward signals)
+                user_correction = RewardModel.detect_user_correction(request.user_input)
+                follow_up_question = RewardModel.detect_follow_up_question(request.user_input)
+                tts_overrun = streaming_engine.voice.metrics.dropped_sentences > 0
+                # conversation_continued = True when we're processing another turn
+                conversation_continued = True  # We are here, so user continued
+                
                 signals = RewardSignals(
-                    contradiction_detected=False,  # Could integrate with retrieval
-                    user_correction=False,  # Will be detected on next turn
-                    tts_overrun=(streaming_engine.voice.metrics.dropped_sentences > 0),
-                    conversation_continued=False,  # Neutral until wired to real in-game continuation signal
-                    follow_up_question=False  # Could detect from user_input
+                    contradiction_detected=False,  # Could integrate with retrieval layer
+                    user_correction=user_correction,
+                    tts_overrun=tts_overrun,
+                    conversation_continued=conversation_continued,
+                    follow_up_question=follow_up_question
                 )
                 
                 # Compute reward

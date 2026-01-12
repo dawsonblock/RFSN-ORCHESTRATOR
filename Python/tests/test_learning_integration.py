@@ -35,7 +35,8 @@ class TestLearningIntegration:
         # Extract features
         features = adapter.build_features(rfsn_state, retrieval_stats, convo_stats)
         assert features is not None
-        assert features.affinity == 0.7
+        # Affinity 0.7 (from [-1,1] scale) maps to 0.85 (in [0,1] scale)
+        assert features.affinity == pytest.approx(0.85, abs=0.01)
         
         # Choose action mode
         action_mode = adapter.choose_action_mode(features)

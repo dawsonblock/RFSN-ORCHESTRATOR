@@ -69,7 +69,11 @@ class PolicyAdapter:
         npc_id_normalized = npc_bucket / 256.0
         
         # Extract RFSN state features
-        affinity = float(rfsn_state.get("affinity", 0.5))  # Already 0-1
+        # Patch 3: affinity is actually [-1, 1], map to [0, 1] for policy
+        raw_affinity = float(rfsn_state.get("affinity", 0.0))
+        # Clamp to [-1, 1] then map to [0, 1]
+        clamped = max(-1.0, min(1.0, raw_affinity))
+        affinity = (clamped + 1.0) / 2.0  # Now 0-1
         
         # Normalize categorical features to 0-1 range
         mood_int = self._mood_to_int(rfsn_state.get("mood", "neutral"))
