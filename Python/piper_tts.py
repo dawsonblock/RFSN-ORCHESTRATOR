@@ -31,24 +31,28 @@ class PiperTTSEngine:
     not a direct .synthesize() method as incorrectly shown in some docs.
     """
     
-    def __init__(self, model_path: str = None, config_path: str = None, speaker_id: int = 0):
+    def __init__(self, model_path: str = None, config_path: str = None, speaker_id: int = 0, enable_queue: bool = True):
         self.model_path = Path(model_path) if model_path else None
         self.config_path = Path(config_path) if config_path else None
         self.speaker_id = speaker_id
+        self.enable_queue = enable_queue
         
-        # Audio queue with backpressure
-        self.audio_queue = queue.Queue(maxsize=2)
+        # Audio queue with backpressure (only if queue mode enabled)
+        self.audio_queue = queue.Queue(maxsize=2) if enable_queue else None
         self._shutdown = False
         self._dropped_count = 0
         
         # Check for piper executable
         self.piper_exe = self._find_piper_executable()
         
-        # Start synthesis worker
-        self.worker = threading.Thread(target=self._synthesis_worker, daemon=True)
-        self.worker.start()
+        # Start synthesis worker only if queue mode enabled
+        self.worker = None
+        if enable_queue:
+            self.worker = threading.Thread(target=self._synthesis_worker, daemon=True)
+            self.worker.start()
         
-        logger.info(f"[Piper] Engine ready (exe={self.piper_exe is not None})")
+        mode = "async queue" if enable_queue else "sync-only"
+        logger.info(f"[Piper] Engine ready (exe={self.piper_exe is not None}, mode={mode})")
     
     def _find_piper_executable(self) -> Optional[str]:
         """Find piper executable in PATH or Models directory"""
@@ -167,7 +171,15 @@ class PiperTTSEngine:
         """
         Queue text for synthesis with backpressure handling.
         Returns: True if queued, False if dropped.
+        
+        Raises RuntimeError if enable_queue=False (use speak_sync instead).
         """
+        if not self.enable_queue:
+            raise RuntimeError(
+                "PiperTTSEngine.speak() called but enable_queue=False. "
+                "Use speak_sync() for synchronous mode."
+            )
+        
         if not text or self._shutdown:
             return False
         
@@ -179,7 +191,7 @@ class PiperTTSEngine:
             try:
                 old_text = self.audio_queue.get_nowait()
                 self._dropped_count += 1
-                logger.warning(f"[Piper] Dropped audio due to backpressure: \'{old_text[:30]}...\'")
+                logger.warning(f"[Piper] Dropped audio due to backpressure: '{old_text[:30]}...'")
                 self.audio_queue.put_nowait(text)
                 return True
             except queue.Empty:
@@ -196,11 +208,13 @@ class PiperTTSEngine:
     def shutdown(self):
         """Graceful shutdown of worker"""
         self._shutdown = True
-        try:
-            self.audio_queue.put_nowait(None)
-        except queue.Full:
-            pass
-        self.worker.join(timeout=5)
+        if self.enable_queue and self.audio_queue is not None:
+            try:
+                self.audio_queue.put_nowait(None)
+            except queue.Full:
+                pass
+            if self.worker:
+                self.worker.join(timeout=5)
         logger.info("[Piper] Engine shutdown complete")
     
     def get_queue_size(self) -> int:

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-RFSN GenAI Orchestrator v8.2 - Production Streaming Build
+RFSN GenAI Orchestrator - Production Streaming Build
 Complete system with Piper/xVASynth TTS, security, metrics, and multi-NPC support.
 """
+from version import ORCHESTRATOR_VERSION, STREAMING_ENGINE_VERSION, get_version_string
 
 import asyncio
 import json
@@ -129,7 +130,7 @@ async def startup_event():
             else:
                 model_path, config_path = setup_piper_voice()
                 if model_path:
-                    piper_engine = PiperTTSEngine(model_path, config_path, speaker_id=0)
+                    piper_engine = PiperTTSEngine(model_path, config_path, speaker_id=0, enable_queue=False)
                     logger.info("Piper TTS initialized")
         except Exception as e:
             logger.error(f"Piper failed: {e}. Disabling voice.")
