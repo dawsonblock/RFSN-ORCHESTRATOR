@@ -1,0 +1,44 @@
+{
+  "session_id": "308d109fd8309484",
+  "start_time": 1768262419.5516002,
+  "end_time": 1768262419.552084,
+  "event_count": 3,
+  "events": [
+    {
+      "event_id": "9ad9d2304af9852d",
+      "event_type": "state_update",
+      "timestamp": 1768262419.5516002,
+      "datetime": "2026-01-12T18:00:19.551600",
+      "wall_clock_time": 1768262419.551601,
+      "checksum": "bfe02e8091f1795c",
+      "data": {
+        "action": "set_seed",
+        "seed": 42
+      }
+    },
+    {
+      "event_id": "840fb7f716ef4e0e",
+      "event_type": "user_input",
+      "timestamp": 1768262419.551913,
+      "datetime": "2026-01-12T18:00:19.551913",
+      "wall_clock_time": 1768262419.551913,
+      "checksum": "63314e2d73775c96",
+      "data": {
+        "text": "test"
+      }
+    },
+    {
+      "event_id": "7716b6459c1c630b",
+      "event_type": "state_update",
+      "timestamp": 1768262419.552084,
+      "datetime": "2026-01-12T18:00:19.552084",
+      "wall_clock_time": 1768262419.552084,
+      "checksum": "ad96a69a3e1582ba",
+      "data": {
+        "field": "affinity",
+        "old_value": 0.0,
+        "new_value": 0.5
+      }
+    }
+  ]
+}
