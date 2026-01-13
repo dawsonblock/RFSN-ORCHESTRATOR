@@ -6,11 +6,11 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-139%20passing-success.svg)](Python/tests/)
+[![Tests](https://img.shields.io/badge/tests-142%20passing-success.svg)](Python/tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-optimized-brightgreen.svg)](Python/)
 
-*Hardened streaming engine with intelligent tokenization, thread-safe queueing, and real-time TTS*
+*Production-ready streaming AI with semantic action selection, world model prediction, and real-time TTS*
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [API](#-api-reference) • [Performance](#-performance)
 
@@ -22,19 +22,22 @@
 
 ### Core Capabilities
 - **🧠 Intelligent Tokenization** - Smart sentence detection with abbreviation handling (Dr., Mr., Jarl)
+- **🎯 Semantic Action Selection** - World model predicts outcomes and scores NPC actions (GREET, APOLOGIZE, THREATEN, etc.)
 - **🎙️ Real-Time TTS** - Piper engine with streaming audio playback
 - **⚡ Thread-Safe Queue** - Deque+Condition pattern eliminates race conditions
 - **🔒 Atomic Runtime** - Safe hot-reloads without half-applied config
 - **📊 Live Metrics** - WebSocket-based performance monitoring dashboard
 - **💾 Persistent Memory** - Conversation history with automatic backups
 - **🤖 Adaptive Learning** - Contextual bandit learns optimal dialogue styles per NPC
+- **🛡️ Safety Rules** - Hard overrides prevent learned stupidity in combat/trust/quest contexts
 
 ### Production Hardening (v9.0)
-- ✅ **139 Tests** - Comprehensive coverage including edge cases and learning layer
+- ✅ **142 Tests** - Comprehensive coverage including edge cases, learning layer, and world model integration
 - ✅ **Zero Race Conditions** - Deque+Condition queue pattern (no task_done/join bugs)
 - ✅ **Atomic State Swaps** - RuntimeState prevents half-applied config during reloads
 - ✅ **Single TTS Queue** - Unified backpressure (no double-buffering)
 - ✅ **Canonical Versioning** - Single source of truth for version strings
+- ✅ **Safety Rules** - Hard overrides prevent learned stupidity in critical states
 
 ---
 
@@ -89,6 +92,12 @@ docker run -p 8000:8000 rfsn-orchestrator
 │  │   Learning   │    │ DequeSpeech  │    │   Audio      │  │
 │  │    Layer     │    │    Queue     │    │   Player     │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
+│         │                    │                               │
+│         ▼                    ▼                               │
+│  ┌──────────────┐    ┌──────────────┐                       │
+│  │  World Model │───▶│Action Scorer │                       │
+│  │  (Prediction)│    │  (Scoring)   │                       │
+│  └──────────────┘    └──────────────┘                       │
 │                                                               │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -100,8 +109,11 @@ docker run -p 8000:8000 rfsn-orchestrator
 | **Orchestrator** | FastAPI server, request handling | `Python/orchestrator.py` |
 | **Streaming Engine** | Token processing, sentence detection | `Python/streaming_engine.py` |
 | **DequeSpeechQueue** | Thread-safe bounded queue with drop policy | `Python/streaming_voice_system.py` |
+| **World Model** | Predicts state transitions from actions | `Python/world_model.py` |
+| **Action Scorer** | Scores candidate actions using predictions | `Python/action_scorer.py` |
 | **Learning Layer** | Contextual bandit for dialogue style selection | `Python/learning/` |
 | **Runtime State** | Atomic state management for safe reloads | `Python/runtime_state.py` |
+| **State Machine** | Authoritative state transitions with invariants | `Python/state_machine.py` |
 | **Memory Manager** | Conversation persistence, backups | `Python/memory_manager.py` |
 | **Piper TTS** | Text-to-speech synthesis | `Python/piper_tts.py` |
 | **Dashboard** | Live metrics visualization | `Dashboard/index.html` |
@@ -200,9 +212,10 @@ python -m pytest tests/ -v
 ### Test Coverage
 
 - **Core Functionality**: 105 tests
-- **Learning Layer**: 21 tests  
+- **Learning Layer**: 21 tests
+- **World Model Integration**: 3 tests
 - **Edge Cases**: 13 tests
-- **Total**: 139 tests (100% passing)
+- **Total**: 142 tests (100% passing)
 
 ### Test Categories
 
@@ -222,6 +235,59 @@ pytest tests/test_edge_cases.py -v
 # Backpressure tests
 pytest tests/test_backpressure.py -v
 ```
+
+---
+
+## 🎯 World Model & Action Scoring
+
+The system includes a world model that predicts state transitions and scores NPC actions based on predicted outcomes:
+
+### NPC Actions
+
+| Action | Description | Use Case |
+|--------|-------------|----------|
+| `GREET` | Warmly welcome the player | First meeting, friendly encounters |
+| `APOLOGIZE` | Express regret for mistakes | After conflicts, mistakes |
+| `THREATEN` | Intimidate the player | Combat, hostile situations |
+| `COMPLIMENT` | Praise the player | Building rapport |
+| `HELP` | Offer assistance | Quests, requests for aid |
+| `REQUEST` | Ask for something | Quest objectives |
+| `AGREE` | Accept player proposals | Cooperation |
+| `DISAGREE` | Reject player proposals | Conflict, boundaries |
+| `IGNORE` | Dismiss the player | Low trust, busy |
+| `INQUIRE` | Ask questions | Information gathering |
+| `EXPLAIN` | Provide information | Lore, instructions |
+
+### Player Signals
+
+The system classifies player input into discrete signals:
+
+- `GREET` - Friendly greetings
+- `INSULT` - Hostile language
+- `HELP` - Requests for assistance
+- `THREATEN` - Combat initiation
+- `APOLOGIZE` - Conciliatory language
+- `QUESTION` - Information seeking
+- `REQUEST` - Demands or asks
+
+### Safety Rules
+
+Hard overrides prevent learned stupidity in critical states:
+
+- **Combat + Fear > 0.7** → Forces `FLEE` action
+- **Trust < 0.1** → Forbids `ACCEPT`, `OFFER`, `HELP` actions
+- **Quest Active** → Biases toward `HELP`, `ACCEPT`, `AGREE` actions
+
+### How It Works
+
+1. **Player Signal Classification** - Regex-based pattern matching with word boundaries
+2. **State Snapshot Creation** - Captures current NPC state (mood, affinity, trust, fear)
+3. **Candidate Proposal** - Generates 5-9 candidate actions with safety overrides
+4. **World Model Prediction** - Predicts outcome state for each action
+5. **Utility Scoring** - Scores predicted states using affinity, trust, fear weights
+6. **Action Selection** - Selects highest-scoring action
+7. **Prompt Injection** - Injects action instruction into LLM system prompt
+8. **State Transition** - Applies authoritative state update via `apply_transition()`
 
 ---
 
