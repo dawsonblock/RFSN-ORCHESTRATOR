@@ -563,3 +563,86 @@ class RFSNStateMachine(StateMachine):
         )
         
         logger.info("RFSN invariants configured")
+
+    def apply_transition(self, state_before: Dict[str, Any],
+                        player_signal: str,
+                        npc_action: str) -> Dict[str, Any]:
+        """
+        Authoritative state transition function.
+
+        This is the single source of truth for state transitions.
+        It applies effects based on the chosen NPC action and player signal.
+
+        Args:
+            state_before: State dictionary before the transition
+            player_signal: PlayerSignal value (e.g., "greet", "insult")
+            npc_action: NPCAction value (e.g., "GREET", "APOLOGIZE")
+
+        Returns:
+            state_after: State dictionary after the transition
+        """
+        state_after = state_before.copy()
+
+        # Base affinity adjustment based on player signal
+        affinity_delta = 0.0
+        if player_signal == "greet":
+            affinity_delta = 0.1
+        elif player_signal == "insult":
+            affinity_delta = -0.2
+        elif player_signal == "apologize":
+            affinity_delta = 0.15
+        elif player_signal == "help":
+            affinity_delta = 0.2
+        elif player_signal == "threaten":
+            affinity_delta = -0.3
+        elif player_signal == "compliment":
+            affinity_delta = 0.15
+
+        # Apply NPC action effects
+        if npc_action == "APOLOGIZE":
+            affinity_delta += 0.1
+            state_after["mood"] = "sad" if state_before.get("mood") != "sad" else state_before["mood"]
+        elif npc_action == "INSULT":
+            affinity_delta -= 0.25
+            state_after["mood"] = "angry"
+        elif npc_action == "COMPLIMENT":
+            affinity_delta += 0.1
+            state_after["mood"] = "happy"
+        elif npc_action == "THREATEN":
+            affinity_delta -= 0.3
+            state_after["mood"] = "angry"
+        elif npc_action == "HELP":
+            affinity_delta += 0.15
+            state_after["mood"] = "happy"
+        elif npc_action == "AGREE":
+            affinity_delta += 0.05
+        elif npc_action == "DISAGREE":
+            affinity_delta -= 0.05
+
+        # Apply affinity change with bounds
+        current_affinity = state_before.get("affinity", 0.0)
+        new_affinity = max(-1.0, min(1.0, current_affinity + affinity_delta))
+        state_after["affinity"] = new_affinity
+
+        # Update relationship based on affinity
+        if new_affinity < -0.5:
+            state_after["relationship"] = "enemy"
+        elif new_affinity < 0.0:
+            state_after["relationship"] = "rival"
+        elif new_affinity < 0.5:
+            state_after["relationship"] = "friend"
+        else:
+            state_after["relationship"] = "ally"
+
+        # Log the transition
+        logger.info(
+            f"State transition: {player_signal} -> {npc_action}, "
+            f"affinity {current_affinity:.2f} -> {new_affinity:.2f}"
+        )
+
+        # Validate the new state
+        is_valid, violations = self.validate_state(state_after)
+        if not is_valid:
+            logger.warning(f"Transition produced invalid state: {violations}")
+
+        return state_after

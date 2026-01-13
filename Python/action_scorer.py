@@ -168,34 +168,58 @@ class ActionScorer:
                           max_candidates: int = 8) -> List[NPCAction]:
         """
         Propose candidate actions based on current state
-        
+
         Args:
             current_state: Current NPC state
             player_signal: Player's signal
             max_candidates: Maximum number of candidates
-            
+
         Returns:
             List of candidate actions
         """
         candidates = self.default_candidates.copy()
-        
+
+        # SAFETY RULE OVERRIDES: Force specific actions in critical states
+        # Rule 1: If combat_active and fear_level > 0.7, force FLEE
+        if current_state.combat_active and current_state.fear_level > 0.7:
+            logger.warning(
+                f"Safety override: combat_active and fear_level {current_state.fear_level:.2f} > 0.7, forcing FLEE"
+            )
+            return [NPCAction.FLEE]
+
+        # Rule 2: If trust_level < 0.1, forbid trust-dependent actions
+        if current_state.trust_level < 0.1:
+            forbidden_actions = [NPCAction.ACCEPT, NPCAction.OFFER, NPCAction.HELP]
+            candidates = [a for a in candidates if a not in forbidden_actions]
+            logger.info(
+                f"Safety override: trust_level {current_state.trust_level:.2f} < 0.1, forbidding {forbidden_actions}"
+            )
+
+        # Rule 3: If quest_active, bias toward helping actions
+        if current_state.quest_active:
+            help_actions = [NPCAction.HELP, NPCAction.ACCEPT, NPCAction.AGREE]
+            for action in help_actions:
+                if action not in candidates:
+                    candidates.insert(0, action)
+            logger.info("Safety override: quest_active, biasing toward help actions")
+
         # Add aggressive candidates if player is hostile
         if player_signal in [PlayerSignal.INSULT, PlayerSignal.THREATEN,
                             PlayerSignal.ATTACK]:
             candidates.extend(self.aggressive_candidates)
-        
+
         # Add defensive candidates if NPC is fearful
         if current_state.fear_level > 0.5 or current_state.combat_active:
             candidates.extend(self.defensive_candidates)
-        
+
         # Add contextual candidates
         if current_state.affinity > 0.5:
             candidates.append(NPCAction.HELP)
-        
+
         if current_state.affinity < -0.3:
             candidates.append(NPCAction.DISAGREE)
             candidates.append(NPCAction.REFUSE)
-        
+
         # Limit candidates
         return candidates[:max_candidates]
     
