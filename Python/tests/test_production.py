@@ -191,7 +191,7 @@ class TestTTSConcurrency:
         if not HAS_VOICE_SYSTEM:
             pytest.skip("streaming_voice_system not available")
 
-        queue = DequeSpeechQueue(max_size=10)
+        queue = DequeSpeechQueue(maxsize=10)
         processed = []
         
         def mock_worker():
@@ -208,7 +208,7 @@ class TestTTSConcurrency:
         
         # Add chunks rapidly
         for i in range(5):
-            queue.put(VoiceChunk(text=f"chunk{i}", audio=bytes([i])))
+            queue.put(VoiceChunk(text=f"chunk{i}", npc_id="test", created_ts=time.time()))
         
         # Wait for processing
         time.sleep(0.5)

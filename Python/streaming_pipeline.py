@@ -151,6 +151,7 @@ class BoundedQueue:
                     return True
                 
                 elif self.drop_policy == DropPolicy.DROP_NEWEST:
+                    self._dropped_newest += 1
                     logger.warning(
                         f"{self.name}: Dropped newest (queue full, "
                         f"total dropped: {self._dropped_count})"
