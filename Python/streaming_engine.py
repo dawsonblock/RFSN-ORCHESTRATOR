@@ -78,6 +78,8 @@ class StreamTokenizer:
             if c_idx < len(token):  # Found a content char
                 # If alphanumeric, it canceled the boundary (continuation)
                 if token[c_idx].isalnum():
+                    # Cancel pending boundary - continuation detected
+                    # Fall through to add token to buffer without splitting
                     self._pending_boundary = False
 
                 # Else (punctuation?), pending boundary stands until flush time
@@ -100,38 +102,49 @@ class StreamTokenizer:
         while cursor < len(self.buffer):
             char = self.buffer[cursor]
             
-            # Handle quotes
-            if char in ('"', '“', '”'):
+            # Handle quotes - track quote state for sentence splitting
+            if char in ('"', '"', '"'):
                 if not self.in_quotes:
                     self.in_quotes = True
                     self.quote_char = char
-                elif char == self.quote_char or char in ('”', '"'): # Simple matching
+                elif char == self.quote_char or char in ('"', '"'):
+                    # Close quote when we see matching quote
                     self.in_quotes = False
                     self.quote_char = None
             
             # Terminator check logic (Patch A)
             if char in ('.', '!', '?'):
 
-                # Check for "..."
+                # Check for "..." - treat as sentence terminator
                 if char == '.' and self.buffer[cursor:cursor+3] == '...':
                     cursor += 2
+                    # Set pending boundary after ellipsis
+                    if cursor + 1 >= len(self.buffer):
+                        self._pending_boundary = True
+                        self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
+                        should_split = True
                     continue
 
                 j = self._peek_after_closers(self.buffer, cursor)
                 should_split = False
 
-                
                 # Boundary conditions
                 if j >= len(self.buffer):
                     # End-of-buffer: defer split (Patch B)
-                    self._pending_boundary = True
-                    self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
-
-                    # Don't split yet
+                    if not self.in_quotes:
+                        self._pending_boundary = True
+                        self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
+                        should_split = True  # Set should_split for abbreviation check
+                    else:
+                        # Inside quotes - don't split, don't set pending boundary
+                        should_split = False
                 elif self.buffer[j].isspace():
                     should_split = True
 
-                
+                # Quote check - don't split inside quotes (final check)
+                if self.in_quotes:
+                    should_split = False
+
                 # Abbreviation Check
                 if char == '.' and should_split:
                     word_match = ABBREVIATION_PATTERN.search(self.buffer[:cursor])
