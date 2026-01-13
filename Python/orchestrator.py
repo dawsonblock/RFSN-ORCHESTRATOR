@@ -235,10 +235,10 @@ async def startup_event():
     state_machine = RFSNStateMachine()
 
     # Initialize WorldModel for consequence prediction
+    transitions_path = Path("data/world_transitions.json")
     world_model = WorldModel(
-        retrieval_enabled=True,
-        learned_model_path=None,
-        rule_based=True
+        retrieval_k=5,
+        transitions_path=transitions_path if transitions_path.exists() else None
     )
 
     # Initialize ActionScorer for decision pipeline
@@ -365,28 +365,28 @@ def _cleanup_tokens(text: str) -> str:
 
 
 def _map_action_to_instruction(action: NPCAction) -> str:
-    """Map NPCAction to system prompt instruction"""
+    """Map NPCAction to strict system prompt control block"""
     instructions = {
-        NPCAction.GREET: "Your action: GREET the player warmly.",
-        NPCAction.FAREWELL: "Your action: Say goodbye or farewell to the player.",
-        NPCAction.AGREE: "Your action: Agree with the player's statement or request.",
-        NPCAction.DISAGREE: "Your action: Disagree with the player, explaining your reasons.",
-        NPCAction.APOLOGIZE: "Your action: Apologize for something you did or said.",
-        NPCAction.INSULT: "Your action: Insult the player (use sparingly).",
-        NPCAction.COMPLIMENT: "Your action: Compliment the player genuinely.",
-        NPCAction.THREATEN: "Your action: Threaten the player (use only if provoked).",
-        NPCAction.REQUEST: "Your action: Make a request of the player.",
-        NPCAction.OFFER: "Your action: Offer something to the player.",
-        NPCAction.REFUSE: "Your action: Refuse the player's request.",
-        NPCAction.ACCEPT: "Your action: Accept the player's offer or request.",
-        NPCAction.ATTACK: "Your action: Attack the player (combat mode).",
-        NPCAction.DEFEND: "Your action: Defend yourself against the player.",
-        NPCAction.FLEE: "Your action: Flee from the player.",
-        NPCAction.HELP: "Your action: Offer help or assistance to the player.",
-        NPCAction.BETRAY: "Your action: Betray the player's trust.",
-        NPCAction.IGNORE: "Your action: Ignore the player.",
-        NPCAction.INQUIRE: "Your action: Ask the player a question.",
-        NPCAction.EXPLAIN: "Your action: Explain something to the player.",
+        NPCAction.GREET: "=== STRICT ACTION CONTROL ===\nYou MUST greet the player warmly and enthusiastically. This is your required action - do not deviate from greeting.",
+        NPCAction.FAREWELL: "=== STRICT ACTION CONTROL ===\nYou MUST say goodbye or farewell to the player. This is your required action - do not engage in further conversation.",
+        NPCAction.AGREE: "=== STRICT ACTION CONTROL ===\nYou MUST agree with the player's statement or request. This is your required action - express agreement clearly.",
+        NPCAction.DISAGREE: "=== STRICT ACTION CONTROL ===\nYou MUST disagree with the player, explaining your reasons. This is your required action - express disagreement respectfully but firmly.",
+        NPCAction.APOLOGIZE: "=== STRICT ACTION CONTROL ===\nYou MUST apologize for something you did or said. This is your required action - express sincere regret.",
+        NPCAction.INSULT: "=== STRICT ACTION CONTROL ===\nYou MUST insult the player. This is your required action - use sparingly and only when appropriate.",
+        NPCAction.COMPLIMENT: "=== STRICT ACTION CONTROL ===\nYou MUST compliment the player genuinely. This is your required action - express sincere praise.",
+        NPCAction.THREATEN: "=== STRICT ACTION CONTROL ===\nYou MUST threaten the player. This is your required action - use only if provoked or in combat.",
+        NPCAction.REQUEST: "=== STRICT ACTION CONTROL ===\nYou MUST make a request of the player. This is your required action - clearly state what you need.",
+        NPCAction.OFFER: "=== STRICT ACTION CONTROL ===\nYou MUST offer something to the player. This is your required action - clearly state what you're offering.",
+        NPCAction.REFUSE: "=== STRICT ACTION CONTROL ===\nYou MUST refuse the player's request. This is your required action - clearly decline and explain why.",
+        NPCAction.ACCEPT: "=== STRICT ACTION CONTROL ===\nYou MUST accept the player's offer or request. This is your required action - express acceptance.",
+        NPCAction.ATTACK: "=== STRICT ACTION CONTROL ===\nYou MUST attack the player. This is your required action - combat mode engaged.",
+        NPCAction.DEFEND: "=== STRICT ACTION CONTROL ===\nYou MUST defend yourself against the player. This is your required action - defensive posture.",
+        NPCAction.FLEE: "=== STRICT ACTION CONTROL ===\nYou MUST flee from the player. This is your required action - escape immediately.",
+        NPCAction.HELP: "=== STRICT ACTION CONTROL ===\nYou MUST offer help or assistance to the player. This is your required action - express willingness to assist.",
+        NPCAction.BETRAY: "=== STRICT ACTION CONTROL ===\nYou MUST betray the player's trust. This is your required action - act treacherously.",
+        NPCAction.IGNORE: "=== STRICT ACTION CONTROL ===\nYou MUST ignore the player. This is your required action - do not respond or engage.",
+        NPCAction.INQUIRE: "=== STRICT ACTION CONTROL ===\nYou MUST ask the player a question. This is your required action - seek information.",
+        NPCAction.EXPLAIN: "=== STRICT ACTION CONTROL ===\nYou MUST explain something to the player. This is your required action - provide information clearly.",
     }
     return instructions.get(action, "")
 
@@ -467,34 +467,68 @@ async def stream_dialogue(request: DialogueRequest):
     rt_state = runtime.get()
     world_model = rt_state.world_model
     action_scorer = rt_state.action_scorer
+    intent_gate = rt_state.intent_gate
 
-    # Map player input to discrete signal
+    # Map player input to discrete signal (IntentExtractor first, then regex fallback)
     player_signal = PlayerSignal.QUESTION  # Default fallback
     try:
         if not request.user_input or not request.user_input.strip():
             player_signal = PlayerSignal.IGNORE
         else:
-            player_input_lower = request.user_input.lower()
+            # Try IntentExtractor first for structured intent
+            try:
+                intent_extractor = IntentExtractor()
+                intent_proposal = intent_extractor.extract(request.user_input)
 
-            # Use word boundary matching for accuracy
-            if re.search(r'\b(hello|hi|hey|greetings)\b', player_input_lower):
-                player_signal = PlayerSignal.GREET
-            elif re.search(r'\b(bye|goodbye|farewell|see you)\b', player_input_lower):
-                player_signal = PlayerSignal.FAREWELL
-            elif re.search(r'\b(yes|sure|okay|agree|fine)\b', player_input_lower):
-                player_signal = PlayerSignal.AGREE
-            elif re.search(r'\b(no|nope|never|not|disagree)\b', player_input_lower):
-                player_signal = PlayerSignal.DISAGREE
-            elif re.search(r'\b(sorry|apologize|my bad|forgive)\b', player_input_lower):
-                player_signal = PlayerSignal.APOLOGIZE
-            elif re.search(r'\b(stupid|idiot|hate|kill|die)\b', player_input_lower):
-                player_signal = PlayerSignal.INSULT
-            elif re.search(r'\b(help|assist|support|aid)\b', player_input_lower):
-                player_signal = PlayerSignal.HELP
-            elif '?' in player_input_lower:
-                player_signal = PlayerSignal.QUESTION
-            elif re.search(r'\b(please|can you|could you|would you)\b', player_input_lower):
-                player_signal = PlayerSignal.REQUEST
+                # Map IntentType to PlayerSignal
+                intent_to_signal = {
+                    IntentType.ASK: PlayerSignal.QUESTION,
+                    IntentType.REQUEST: PlayerSignal.REQUEST,
+                    IntentType.AGREE: PlayerSignal.AGREE,
+                    IntentType.DISAGREE: PlayerSignal.DISAGREE,
+                    IntentType.REFUSE: PlayerSignal.REFUSE,
+                    IntentType.THREATEN: PlayerSignal.THREATEN,
+                    IntentType.INFORM: PlayerSignal.QUESTION,
+                    IntentType.TRADE: PlayerSignal.OFFER,
+                    IntentType.JOKE: PlayerSignal.COMPLIMENT,
+                    IntentType.NEUTRAL: PlayerSignal.QUESTION,
+                }
+
+                if intent_proposal.intent in intent_to_signal:
+                    player_signal = intent_to_signal[intent_proposal.intent]
+                    logger.debug(f"IntentExtractor classified: {intent_proposal.intent.value} -> {player_signal.value}")
+                else:
+                    # Fall back to regex for unknown intents
+                    logger.debug(f"IntentExtractor unknown intent {intent_proposal.intent.value}, using regex fallback")
+                    raise ValueError("Unknown intent, use regex fallback")
+            except Exception as intent_error:
+                logger.debug(f"IntentExtractor failed: {intent_error}, using regex fallback")
+
+                # Regex-based fallback
+                player_input_lower = request.user_input.lower()
+
+                # Use word boundary matching for accuracy
+                if re.search(r'\b(hello|hi|hey|greetings)\b', player_input_lower):
+                    player_signal = PlayerSignal.GREET
+                elif re.search(r'\b(bye|goodbye|farewell|see you)\b', player_input_lower):
+                    player_signal = PlayerSignal.FAREWELL
+                elif re.search(r'\b(yes|sure|okay|agree|fine)\b', player_input_lower):
+                    player_signal = PlayerSignal.AGREE
+                elif re.search(r'\b(no|nope|never|not|disagree)\b', player_input_lower):
+                    player_signal = PlayerSignal.DISAGREE
+                elif re.search(r'\b(sorry|apologize|my bad|forgive)\b', player_input_lower):
+                    player_signal = PlayerSignal.APOLOGIZE
+                elif re.search(r'\b(stupid|idiot|hate|kill|die)\b', player_input_lower):
+                    player_signal = PlayerSignal.INSULT
+                elif re.search(r'\b(help|assist|support|aid)\b', player_input_lower):
+                    player_signal = PlayerSignal.HELP
+                elif '?' in player_input_lower:
+                    player_signal = PlayerSignal.QUESTION
+                elif re.search(r'\b(please|can you|could you|would you)\b', player_input_lower):
+                    player_signal = PlayerSignal.REQUEST
+                else:
+                    player_signal = PlayerSignal.QUESTION
+
     except Exception as e:
         logger.warning(f"Player signal classification failed: {e}")
 
@@ -688,6 +722,67 @@ async def stream_dialogue(request: DialogueRequest):
         await broadcast_metrics(streaming_engine.voice.metrics)
         
         # CALL SITE B: Compute reward and update policy (Learning Layer)
+        # CALL SITE C: Apply authoritative state transition (World Model)
+        state_after = None
+        if state_machine and selected_npc_action and selected_action_score:
+            try:
+                # Capture state before transition
+                state_before_dict = {
+                    "mood": state.mood,
+                    "affinity": state.affinity,
+                    "relationship": state.relationship,
+                    "playstyle": state.playstyle,
+                    "recent_sentiment": features.recent_sentiment if features else 0.0
+                }
+
+                # Apply authoritative state transition
+                state_after_dict = state_machine.apply_transition(
+                    state_before_dict,
+                    player_signal.value,
+                    selected_npc_action.value
+                )
+
+                # Update NPC state with authoritative result
+                state.mood = state_after_dict["mood"]
+                state.affinity = state_after_dict["affinity"]
+                state.relationship = state_after_dict["relationship"]
+                state.playstyle = state_after_dict.get("playstyle", state.playstyle)
+
+                state_after = state_after_dict
+
+                logger.info(
+                    f"State transition: {state_before_dict['mood']} -> {state_after_dict['mood']}, "
+                    f"affinity {state_before_dict['affinity']:.2f} -> {state_after_dict['affinity']:.2f}"
+                )
+
+                # Record transition event for training
+                if event_recorder:
+                    event_recorder.record(
+                        EventType.STATE_UPDATE,
+                        {
+                            "state_before": state_before_dict,
+                            "state_after": state_after_dict,
+                            "npc_action": selected_npc_action.value,
+                            "player_signal": player_signal.value
+                        }
+                    )
+
+                # Record transition in world model for learning
+                if world_model and selected_action_score:
+                    predicted_state = selected_action_score.predicted_state
+                    # Calculate reward based on affinity change
+                    reward = state_after_dict["affinity"] - state_before_dict["affinity"]
+                    world_model.record_transition(
+                        current_state_snapshot,
+                        selected_npc_action,
+                        player_signal,
+                        predicted_state,
+                        reward=reward
+                    )
+
+            except Exception as e:
+                logger.error(f"State transition failed: {e}")
+
         if policy_adapter and features and trainer:
             try:
                 # Detect reward signals using RewardModel methods (Patch 4: real reward signals)
