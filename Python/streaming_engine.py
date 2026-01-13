@@ -70,26 +70,25 @@ class StreamTokenizer:
         # CRITICAL (Patch v8.9): Check if new token CANCELS pending boundary BEFORE deadline flush
         # This prevents premature flush of abbreviations like "Mr." + " Jones"
         if self._pending_boundary and len(token) > 0:
-            # Skip leading closers/whitespace to find first content char
+            # Skip leading whitespace to find first content char
             c_idx = 0
-            while c_idx < len(token) and (token[c_idx] in CLOSERS or token[c_idx].isspace()):
+            while c_idx < len(token) and token[c_idx].isspace():
                 c_idx += 1
             
-            if c_idx < len(token):  # Found a content char
-                # If alphanumeric, it canceled the boundary (continuation)
-                if token[c_idx].isalnum():
-                    # The continuation confirms this was an abbreviation
-                    # Combine buffered content with continuation and emit as sentence
-                    combined = self.buffer.strip() + token
-                    if combined:
-                        sentences.append(combined)
-                    self.buffer = ""
+            if c_idx < len(token):  # Found a content char after whitespace
+                # Skip leading closers to find first alphanumeric char
+                while c_idx < len(token) and token[c_idx] in CLOSERS:
+                    c_idx += 1
+                
+                if c_idx < len(token) and token[c_idx].isalnum():
+                    # Alphanumeric continuation - cancel pending boundary
                     self._pending_boundary = False
+                    # Add token to buffer and continue normal processing
+                    self.buffer += token
                     # Return early to avoid double-processing the token
                     return sentences
-
                 # Else (punctuation?), pending boundary stands until flush time
-            # Else (all closers/space), effectively still boundary-ish, let timer flush it
+            # Else (all whitespace), let pending boundary stand until flush time
         
         # Check pending flush deadline AFTER cancellation check
         now = time.time()
@@ -109,6 +108,8 @@ class StreamTokenizer:
             char = self.buffer[cursor]
             
             # Handle quotes - track quote state for sentence splitting
+            # Must do this BEFORE terminator check so quote state is accurate
+            quote_just_closed = False
             if char in ('"', '"', '"'):
                 if not self.in_quotes:
                     self.in_quotes = True
@@ -117,6 +118,7 @@ class StreamTokenizer:
                     # Close quote when we see matching quote
                     self.in_quotes = False
                     self.quote_char = None
+                    quote_just_closed = True
             
             # Terminator check logic (Patch A)
             if char in ('.', '!', '?'):
@@ -140,7 +142,7 @@ class StreamTokenizer:
                     if not self.in_quotes:
                         self._pending_boundary = True
                         self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
-                        should_split = True  # Set should_split for abbreviation check
+                        should_split = False  # Don't split yet, just set pending boundary
                     else:
                         # Inside quotes - don't split, don't set pending boundary
                         should_split = False
@@ -148,7 +150,29 @@ class StreamTokenizer:
                     should_split = True
 
                 # Quote check - don't split inside quotes (final check)
+                # BUT: allow split if quote is closed and followed by space
                 if self.in_quotes:
+                    should_split = False
+                    # Special case: period inside quote, but quote closes immediately after
+                    # Look ahead to see if quote closes at cursor+1
+                    if char == '.' and cursor + 1 < len(self.buffer):
+                        next_char = self.buffer[cursor + 1]
+                        if next_char in ('"', '"', '"'):
+                            # Quote closes after period - check for space after quote
+                            if cursor + 2 < len(self.buffer) and self.buffer[cursor + 2].isspace():
+                                # Period, closing quote, space - this is a sentence boundary
+                                should_split = True
+                            elif cursor + 2 >= len(self.buffer):
+                                # End of buffer - set pending boundary
+                                self._pending_boundary = True
+                                self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
+                elif quote_just_closed and j < len(self.buffer) and self.buffer[j] == ' ':
+                    # Quote was just closed, space follows - allow split
+                    should_split = True
+                elif quote_just_closed and j >= len(self.buffer):
+                    # Quote was just closed at end of buffer - set pending boundary
+                    self._pending_boundary = True
+                    self._pending_boundary_deadline = time.time() + (BOUNDARY_FLUSH_MS / 1000.0)
                     should_split = False
 
                 # Abbreviation Check

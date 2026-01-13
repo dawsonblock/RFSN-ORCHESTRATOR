@@ -35,13 +35,20 @@ class TestStreamingSegmentation:
         """Test that abbreviations like 'Mr.' don't cause premature splits"""
         tokenizer = StreamTokenizer()
         
-        # Process "Mr. Jones" as two tokens
+        # Process "Mr. Jones is here." as three tokens
         sentences = tokenizer.process("Mr.")
         assert len(sentences) == 0, "Should not split after 'Mr.'"
         
         sentences = tokenizer.process(" Jones")
-        assert len(sentences) == 1, "Should complete sentence after continuation"
-        assert "Mr. Jones" in sentences[0]
+        assert len(sentences) == 0, "Should not split after continuation, wait for terminator"
+        
+        sentences = tokenizer.process(" is here.")
+        assert len(sentences) == 0, "Should buffer until flush"
+        
+        # Flush to get the complete sentence
+        sentences = tokenizer.flush()
+        assert len(sentences) == 1, "Should emit complete sentence on flush"
+        assert "Mr. Jones is here." in sentences[0]
     
     def test_ellipsis_handling(self):
         """Test that '...' is handled correctly"""
@@ -49,6 +56,8 @@ class TestStreamingSegmentation:
         
         text = "Wait for it..."
         sentences = tokenizer.process(text)
+        # Ellipsis sets pending boundary, need to flush
+        sentences.extend(tokenizer.flush())
         assert len(sentences) == 1
         assert "..." in sentences[0]
     
@@ -58,8 +67,12 @@ class TestStreamingSegmentation:
         
         text = "Hello 世界! How are you?"
         sentences = tokenizer.process(text)
-        assert len(sentences) == 2
+        # First sentence emitted, second buffered
+        assert len(sentences) == 1
         assert "世界" in sentences[0]
+        # Flush to get second sentence
+        sentences.extend(tokenizer.flush())
+        assert len(sentences) == 2
     
     def test_fast_token_bursts(self):
         """Test handling of rapid token bursts"""
@@ -72,6 +85,8 @@ class TestStreamingSegmentation:
         for token in tokens:
             sentences.extend(tokenizer.process(token))
         
+        # Sentence buffered, need to flush
+        sentences.extend(tokenizer.flush())
         assert len(sentences) == 1
         assert "The quick brown fox jumps over the lazy dog." in sentences[0]
     
@@ -82,6 +97,10 @@ class TestStreamingSegmentation:
         text = 'He said "Hello world!" and left.'
         sentences = tokenizer.process(text)
         
+        # Quote inside sentence, sentence buffered at end
+        assert len(sentences) == 0
+        # Flush to get the complete sentence
+        sentences.extend(tokenizer.flush())
         assert len(sentences) == 1
         assert '"Hello world!"' in sentences[0]
 

@@ -1,0 +1,3 @@
+{"event_id": "f5eae826b813cbea", "event_type": "state_update", "timestamp": 1768269690.196949, "datetime": "2026-01-12T20:01:30.196949", "wall_clock_time": 1768269690.19695, "checksum": "bfe02e8091f1795c", "data": {"action": "set_seed", "seed": 42}}
+{"event_id": "32b20359c81ace59", "event_type": "user_input", "timestamp": 1768269690.198248, "datetime": "2026-01-12T20:01:30.198248", "wall_clock_time": 1768269690.198248, "checksum": "63314e2d73775c96", "data": {"text": "test"}}
+{"event_id": "00ed9d5686eb8f56", "event_type": "state_update", "timestamp": 1768269690.199221, "datetime": "2026-01-12T20:01:30.199221", "wall_clock_time": 1768269690.199222, "checksum": "ad96a69a3e1582ba", "data": {"field": "affinity", "old_value": 0.0, "new_value": 0.5}}

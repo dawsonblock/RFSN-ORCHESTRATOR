@@ -35,6 +35,7 @@ class EventType(Enum):
     MEMORY_ADDED = "memory_added"
     LEARNING_UPDATE = "learning_update"
     ERROR = "error"
+    STATE_TRANSITION = "state_transition"
 
 
 @dataclass
@@ -461,6 +462,32 @@ class DeterministicOrchestrator:
                 "error_type": error_type,
                 "error_message": error_message,
                 "context": context or {}
+            }
+        )
+    
+    def record_state_transition(self, state_before: Dict[str, Any],
+                                action: str,
+                                player_signal: str,
+                                state_after: Dict[str, Any],
+                                reward: float = 0.0):
+        """
+        Record a state transition for world model learning
+        
+        Args:
+            state_before: State before action
+            action: NPC action taken
+            player_signal: Player signal received
+            state_after: State after action
+            reward: Reward received
+        """
+        return self.recorder.record(
+            EventType.STATE_TRANSITION,
+            {
+                "state_before": state_before,
+                "action": action,
+                "player_signal": player_signal,
+                "state_after": state_after,
+                "reward": reward
             }
         )
     
