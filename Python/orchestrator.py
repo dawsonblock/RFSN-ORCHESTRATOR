@@ -39,7 +39,7 @@ from xvasynth_engine import XVASynthEngine
 # Import learning layer
 from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog
 from learning.learning_contract import (
-    LearningContract, LearningConstraints, StateSnapshot,
+    LearningContract, LearningConstraints, StateSnapshot as LearningStateSnapshot,
     LearningUpdate, EvidenceType, WriteGateError
 )
 from memory_governance import MemoryGovernance, GovernedMemory, MemoryType, MemorySource
@@ -48,6 +48,13 @@ from streaming_pipeline import StreamingPipeline, BoundedQueue, DropPolicy
 from observability import StructuredLogger, MetricsCollector, TraceContext
 from event_recorder import EventRecorder, EventType
 from state_machine import StateMachine, RFSNStateMachine
+
+# Import world model and action scoring
+from world_model import (
+    WorldModel, StateSnapshot, NPCAction, PlayerSignal
+)
+from action_scorer import ActionScorer, UtilityFunction
+import re
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -226,7 +233,27 @@ async def startup_event():
     
     # Initialize StateMachine for RFSN state invariants
     state_machine = RFSNStateMachine()
+
+    # Initialize WorldModel for consequence prediction
+    world_model = WorldModel(
+        retrieval_enabled=True,
+        learned_model_path=None,
+        rule_based=True
+    )
+
+    # Initialize ActionScorer for decision pipeline
+    action_scorer = ActionScorer(
+        world_model=world_model,
+        utility_fn=UtilityFunction(
+            affinity_weight=0.3,
+            trust_weight=0.2,
+            fear_penalty=0.3,
+            quest_bonus=0.2
+        )
+    )
+
     logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer, LearningContract, MemoryGovernance, IntentGate, StreamingPipeline, Observability, EventRecorder, StateMachine)")
+    logger.info("World model initialized (retrieval-based, rule-based)")
     
     # Swap engines into RuntimeState atomically (Patch 1: atomic engine pointers)
     runtime.swap(RuntimeState(
@@ -242,7 +269,9 @@ async def startup_event():
         streaming_pipeline=streaming_pipeline,
         observability=structured_logger,
         event_recorder=event_recorder,
-        state_machine=state_machine
+        state_machine=state_machine,
+        world_model=world_model,
+        action_scorer=action_scorer
     ))
     logger.info("Runtime state initialized atomically")
 
@@ -335,6 +364,33 @@ def _cleanup_tokens(text: str) -> str:
     return text.strip()
 
 
+def _map_action_to_instruction(action: NPCAction) -> str:
+    """Map NPCAction to system prompt instruction"""
+    instructions = {
+        NPCAction.GREET: "Your action: GREET the player warmly.",
+        NPCAction.FAREWELL: "Your action: Say goodbye or farewell to the player.",
+        NPCAction.AGREE: "Your action: Agree with the player's statement or request.",
+        NPCAction.DISAGREE: "Your action: Disagree with the player, explaining your reasons.",
+        NPCAction.APOLOGIZE: "Your action: Apologize for something you did or said.",
+        NPCAction.INSULT: "Your action: Insult the player (use sparingly).",
+        NPCAction.COMPLIMENT: "Your action: Compliment the player genuinely.",
+        NPCAction.THREATEN: "Your action: Threaten the player (use only if provoked).",
+        NPCAction.REQUEST: "Your action: Make a request of the player.",
+        NPCAction.OFFER: "Your action: Offer something to the player.",
+        NPCAction.REFUSE: "Your action: Refuse the player's request.",
+        NPCAction.ACCEPT: "Your action: Accept the player's offer or request.",
+        NPCAction.ATTACK: "Your action: Attack the player (combat mode).",
+        NPCAction.DEFEND: "Your action: Defend yourself against the player.",
+        NPCAction.FLEE: "Your action: Flee from the player.",
+        NPCAction.HELP: "Your action: Offer help or assistance to the player.",
+        NPCAction.BETRAY: "Your action: Betray the player's trust.",
+        NPCAction.IGNORE: "Your action: Ignore the player.",
+        NPCAction.INQUIRE: "Your action: Ask the player a question.",
+        NPCAction.EXPLAIN: "Your action: Explain something to the player.",
+    }
+    return instructions.get(action, "")
+
+
 @app.post("/api/dialogue/stream", dependencies=[Depends(optional_auth)])
 async def stream_dialogue(request: DialogueRequest):
     """
@@ -405,15 +461,115 @@ async def stream_dialogue(request: DialogueRequest):
             logger.info(f"Learning: Selected action mode {action_mode.name}")
         except Exception as e:
             logger.error(f"Learning layer error (feature extraction): {e}")
-    
+
+    # CALL SITE A.5: World Model Decision Loop
+    # Get runtime state for world model access
+    rt_state = runtime.get()
+    world_model = rt_state.world_model
+    action_scorer = rt_state.action_scorer
+
+    # Map player input to discrete signal
+    player_signal = PlayerSignal.QUESTION  # Default fallback
+    try:
+        if not request.user_input or not request.user_input.strip():
+            player_signal = PlayerSignal.IGNORE
+        else:
+            player_input_lower = request.user_input.lower()
+
+            # Use word boundary matching for accuracy
+            if re.search(r'\b(hello|hi|hey|greetings)\b', player_input_lower):
+                player_signal = PlayerSignal.GREET
+            elif re.search(r'\b(bye|goodbye|farewell|see you)\b', player_input_lower):
+                player_signal = PlayerSignal.FAREWELL
+            elif re.search(r'\b(yes|sure|okay|agree|fine)\b', player_input_lower):
+                player_signal = PlayerSignal.AGREE
+            elif re.search(r'\b(no|nope|never|not|disagree)\b', player_input_lower):
+                player_signal = PlayerSignal.DISAGREE
+            elif re.search(r'\b(sorry|apologize|my bad|forgive)\b', player_input_lower):
+                player_signal = PlayerSignal.APOLOGIZE
+            elif re.search(r'\b(stupid|idiot|hate|kill|die)\b', player_input_lower):
+                player_signal = PlayerSignal.INSULT
+            elif re.search(r'\b(help|assist|support|aid)\b', player_input_lower):
+                player_signal = PlayerSignal.HELP
+            elif '?' in player_input_lower:
+                player_signal = PlayerSignal.QUESTION
+            elif re.search(r'\b(please|can you|could you|would you)\b', player_input_lower):
+                player_signal = PlayerSignal.REQUEST
+    except Exception as e:
+        logger.warning(f"Player signal classification failed: {e}")
+
+    # Create StateSnapshot from current RFSNState
+    current_state_snapshot = StateSnapshot(
+        mood=state.mood,
+        affinity=state.affinity,
+        relationship=state.relationship,
+        recent_sentiment=features.recent_sentiment if features else 0.0,
+        combat_active=False,
+        quest_active=False,
+        trust_level=(
+            max(0.0, min(1.0, (state.affinity + 1.0) / 2.0))
+            if state.affinity is not None
+            else 0.5
+        ),
+        fear_level=0.0,
+        additional_fields={"npc_name": npc_name}
+    )
+
+    # Validate affinity range
+    if state.affinity is not None and (state.affinity < -1.0 or state.affinity > 1.0):
+        logger.warning(f"Affinity out of expected range [-1, 1]: {state.affinity}")
+
+    # Generate and score action candidates
+    selected_npc_action = None
+    selected_action_score = None
+    try:
+        if action_scorer and world_model:
+            # Score candidates directly (generates internally)
+            action_scores = action_scorer.score_candidates(
+                current_state_snapshot,
+                player_signal
+            )
+
+            # Select best action (already sorted)
+            if action_scores:
+                selected_action_score = action_scores[0]
+                selected_npc_action = selected_action_score.action
+                logger.info(
+                    f"World Model: Selected action {selected_npc_action.value} "
+                    f"(score={selected_action_score.total_score:.2f}, "
+                    f"utility={selected_action_score.utility_score:.2f}, "
+                    f"risk={selected_action_score.risk_score:.2f})"
+                )
+
+                # Record decision event
+                if event_recorder:
+                    event_recorder.record(
+                        EventType.ACTION_CHOSEN,
+                        {
+                            "npc_action": selected_npc_action.value,
+                            "player_signal": player_signal.value,
+                            "action_score": selected_action_score.total_score,
+                            "reasoning": selected_action_score.reasoning,
+                            "predicted_state": selected_action_score.predicted_state.to_dict()
+                        }
+                    )
+    except Exception as e:
+        logger.error(f"World model decision loop failed: {e}")
+        selected_npc_action = None
+
     # Build prompt with context compression and action mode injection
     history = memory.get_context_window(limit=config_watcher.get("context_limit", 4)) if config_watcher.get("memory_enabled") else ""
     system_prompt = f"You are {state.npc_name}. {state.get_attitude_instruction()}"
-    
+
     # Inject action mode control block
     if policy_adapter:
         system_prompt += f"\n\n{action_mode.prompt_injection}"
-    
+
+    # Inject selected NPC action instruction
+    if selected_npc_action:
+        action_instruction = _map_action_to_instruction(selected_npc_action)
+        system_prompt += f"\n\n{action_instruction}"
+
     full_prompt = f"System: {system_prompt}\n{history}\nPlayer: {request.user_input}\n{state.npc_name}:"
     
     # Snapshot configuration per request (Patch 4) prevents mid-stream tuning weirdness
@@ -506,7 +662,10 @@ async def stream_dialogue(request: DialogueRequest):
                             metadata={
                                 "npc_name": npc_name,
                                 "user_input": request.user_input,
-                                "action_mode": action_mode.name if action_mode else None
+                                "action_mode": action_mode.name if action_mode else None,
+                                "npc_action": selected_npc_action.value if selected_npc_action else None,
+                                "player_signal": player_signal.value,
+                                "action_score": selected_action_score.total_score if selected_action_score else None
                             }
                         )
                         memory_governance.add_memory(governed_memory)

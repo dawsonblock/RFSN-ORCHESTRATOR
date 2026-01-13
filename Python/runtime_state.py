@@ -42,8 +42,8 @@ class RuntimeState:
     observability: Optional[Any] = None
     event_recorder: Optional[Any] = None
     state_machine: Optional[Any] = None
-    
-    # Hot config overlay
+    world_model: Optional[Any] = None
+    action_scorer: Optional[Any] = None
     hot_config: Optional[Any] = None
     
     def is_healthy(self) -> bool:
