@@ -78,9 +78,15 @@ class StreamTokenizer:
             if c_idx < len(token):  # Found a content char
                 # If alphanumeric, it canceled the boundary (continuation)
                 if token[c_idx].isalnum():
-                    # Cancel pending boundary - continuation detected
-                    # Fall through to add token to buffer without splitting
+                    # The continuation confirms this was an abbreviation
+                    # Combine buffered content with continuation and emit as sentence
+                    combined = self.buffer.strip() + token
+                    if combined:
+                        sentences.append(combined)
+                    self.buffer = ""
                     self._pending_boundary = False
+                    # Return early to avoid double-processing the token
+                    return sentences
 
                 # Else (punctuation?), pending boundary stands until flush time
             # Else (all closers/space), effectively still boundary-ish, let timer flush it
