@@ -244,6 +244,13 @@ class DialogueEventHandler : public BSTEventSink<TESTopicInfoEvent>
 public:
     virtual EventResult ReceiveEvent(TESTopicInfoEvent* evn, EventDispatcher<TESTopicInfoEvent>* dispatcher)
     {
+        // Validate pointers
+        if (!evn || !evn->speaker || !evn->targetInfo)
+        {
+            _ERROR("[RFSN] Null pointer in dialogue event");
+            return kEvent_Continue;
+        }
+        
         if (evn->stage == TESTopicInfoEvent::kStage_Begin)
         {
             // Capture dialogue start
@@ -254,34 +261,50 @@ public:
     
     void HandleDialogueStart(TESObjectREFR* speaker, TESTopicInfo* info)
     {
-        // Get player input
-        std::string playerInput = GetPlayerInput();
-        
-        // Build observation packet
-        Json::Value observation;
-        observation["npc_id"] = GetNPCId(speaker);
-        observation["player_input"] = playerInput;
-        observation["distance"] = GetDistance(speaker);
-        
-        // Send to RFSN service
-        std::string decision = SendToRFSN(observation.toStyledString());
-        
-        // Parse response
-        Json::Value response;
-        Json::Reader reader;
-        reader.parse(decision, response);
-        
-        // Get dialogue line
-        std::string dialogueLine = response["dialogue_line"].asString();
-        
-        // Generate TTS
-        std::string audioPath = GenerateTTS(dialogueLine, GetNPCVoice(speaker));
-        
-        // Inject audio
-        PlayAudio(speaker, audioPath);
-        
-        // Show subtitle
-        ShowSubtitle(dialogueLine);
+        try
+        {
+            // Get player input
+            std::string playerInput = GetPlayerInput();
+            
+            // Build observation packet
+            Json::Value observation;
+            observation["npc_id"] = GetNPCId(speaker);
+            observation["player_input"] = playerInput;
+            observation["distance"] = GetDistance(speaker);
+            
+            // Send to RFSN service
+            std::string decision = SendToRFSN(observation.toStyledString());
+            
+            // Parse response
+            Json::Value response;
+            Json::Reader reader;
+            if (!reader.parse(decision, response))
+            {
+                _ERROR("[RFSN] Failed to parse JSON response");
+                return;
+            }
+            
+            // Get dialogue line
+            std::string dialogueLine = response.get("dialogue_line", "").asString();
+            if (dialogueLine.empty())
+            {
+                _WARNING("[RFSN] Empty dialogue line received");
+                return;
+            }
+            
+            // Generate TTS
+            std::string audioPath = GenerateTTS(dialogueLine, GetNPCVoice(speaker));
+            
+            // Inject audio
+            PlayAudio(speaker, audioPath);
+            
+            // Show subtitle
+            ShowSubtitle(dialogueLine);
+        }
+        catch (const std::exception& ex)
+        {
+            _ERROR("[RFSN] Exception in HandleDialogueStart: %s", ex.what());
+        }
     }
 };
 ```
@@ -344,19 +367,42 @@ def generate_skyrim_tts(text: str, voice_model: str) -> str:
         
     Returns:
         Path to generated audio file
+        
+    Raises:
+        RuntimeError: If TTS generation fails
     """
-    response = requests.post(
-        "http://localhost:8008/synthesize",
-        json={
-            "text": text,
-            "voice": voice_model,
-            "pace": 1.0,
-            "pitch": 1.0
-        }
-    )
-    
-    audio_path = response.json()["audio_path"]
-    return audio_path
+    try:
+        response = requests.post(
+            "http://localhost:8008/synthesize",
+            json={
+                "text": text,
+                "voice": voice_model,
+                "pace": 1.0,
+                "pitch": 1.0
+            },
+            timeout=5.0
+        )
+        
+        response.raise_for_status()
+        
+        data = response.json()
+        if "audio_path" not in data:
+            raise RuntimeError("Missing audio_path in response")
+        
+        audio_path = data["audio_path"]
+        
+        # Verify file exists
+        if not os.path.exists(audio_path):
+            raise RuntimeError(f"Generated audio file not found: {audio_path}")
+        
+        return audio_path
+        
+    except requests.Timeout:
+        raise RuntimeError("TTS request timeout")
+    except requests.RequestException as ex:
+        raise RuntimeError(f"TTS network error: {ex}")
+    except (KeyError, ValueError) as ex:
+        raise RuntimeError(f"Invalid TTS response: {ex}")
 ```
 
 #### 4. Audio Injection

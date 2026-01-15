@@ -151,11 +151,46 @@ public class RfsnClient : MonoBehaviour
 
     public async Task<DecisionOutput> RequestDecision(ObservationPacket obs)
     {
-        var json = JsonConvert.SerializeObject(obs);
-        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-        var response = await httpClient.PostAsync("/api/decide", content);
-        var responseJson = await response.Content.ReadAsStringAsync();
-        return JsonConvert.DeserializeObject<DecisionOutput>(responseJson);
+        try
+        {
+            var json = JsonConvert.SerializeObject(obs);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            
+            // Set timeout
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var response = await httpClient.PostAsync("/api/decide", content, cts.Token);
+            
+            response.EnsureSuccessStatusCode();
+            var responseJson = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<DecisionOutput>(responseJson);
+        }
+        catch (TaskCanceledException)
+        {
+            Debug.LogError("[RFSN] Request timeout - using fallback");
+            return GetFallbackDecision(obs);
+        }
+        catch (HttpRequestException ex)
+        {
+            Debug.LogError($"[RFSN] Network error: {ex.Message}");
+            return GetFallbackDecision(obs);
+        }
+        catch (JsonException ex)
+        {
+            Debug.LogError($"[RFSN] JSON parse error: {ex.Message}");
+            return GetFallbackDecision(obs);
+        }
+    }
+
+    private DecisionOutput GetFallbackDecision(ObservationPacket obs)
+    {
+        // Fallback to safe idle action
+        return new DecisionOutput
+        {
+            npc_id = obs.npc_id,
+            state = "NEUTRAL",
+            action_id = "IDLE",
+            action_intent = "Remain calm and observant."
+        };
     }
 
     public async Task ReportExecution(ExecutionReport report)
