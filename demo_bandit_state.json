@@ -1,0 +1,78 @@
+{
+  "ALERT": {
+    "EXPLAIN": {
+      "a": 5.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8735073,
+      "n": 4,
+      "value_sum": 2.0
+    },
+    "INQUIRE": {
+      "a": 12.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8750548,
+      "n": 11,
+      "value_sum": 5.5
+    },
+    "WARN": {
+      "a": 6.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8752956,
+      "n": 5,
+      "value_sum": 5.0
+    }
+  },
+  "FRIENDLY": {
+    "COMPLIMENT": {
+      "a": 7.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.869887,
+      "n": 6,
+      "value_sum": 1.8
+    },
+    "EXPLAIN": {
+      "a": 5.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8696203,
+      "n": 4,
+      "value_sum": 1.2
+    },
+    "GREET": {
+      "a": 6.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8701174,
+      "n": 5,
+      "value_sum": 5.0
+    },
+    "HELP": {
+      "a": 6.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8703372,
+      "n": 5,
+      "value_sum": 5.0
+    }
+  },
+  "HOSTILE": {
+    "FLEE": {
+      "a": 7.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.8807364,
+      "n": 6,
+      "value_sum": 6.0
+    },
+    "THREATEN": {
+      "a": 1.0,
+      "b": 6.0,
+      "last_update_ts": 1768506507.8815682,
+      "n": 5,
+      "value_sum": -2.5
+    },
+    "WARN": {
+      "a": 10.0,
+      "b": 1.0,
+      "last_update_ts": 1768506507.881304,
+      "n": 9,
+      "value_sum": 9.0
+    }
+  }
+}
