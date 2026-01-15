@@ -698,8 +698,9 @@ async def stream_dialogue(request: DialogueRequest):
         try:
             # Emit metadata event first (before any content)
             metadata_event = {
-                "type": "meta",
-                "npc_name": state.npc_name,
+                "player_signal": player_signal.value,
+                "bandit_key": bandit_key,
+            }
                 "npc_action": selected_npc_action.value if selected_npc_action else None,
                 "action_mode": action_mode.name if action_mode else None,
                 "player_signal": player_signal.value,
