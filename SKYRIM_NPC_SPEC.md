@@ -245,6 +245,9 @@ public:
     virtual EventResult ReceiveEvent(TESTopicInfoEvent* evn, EventDispatcher<TESTopicInfoEvent>* dispatcher)
     {
         // Validate pointers
+        // SKSE may dispatch TESTopicInfoEvent with null event data, speaker, or targetInfo
+        // (for example during load/unload or when dialogue is aborted). We must treat these
+        // as no-op and continue to avoid dereferencing invalid pointers in the event sink.
         if (!evn || !evn->speaker || !evn->targetInfo)
         {
             _ERROR("[RFSN] Null pointer in dialogue event");
