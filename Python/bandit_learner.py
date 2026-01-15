@@ -167,7 +167,7 @@ class StateActionBandit:
             reward: Observed reward (will be clamped to [reward_min, reward_max])
             ts: Optional timestamp (uses current time if None)
         """
-        ts = ts or time.time()
+        ts = ts if ts is not None else time.time()
         reward = self._clamp(reward, self.cfg.reward_min, self.cfg.reward_max)
 
         st = self._db.setdefault(state_id, {})
