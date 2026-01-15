@@ -932,10 +932,11 @@ async def stream_dialogue(request: DialogueRequest):
                     bandit_reward = max(0.0, min(1.0, bandit_reward))
                     
                     # Update bandit
-                    npc_action_bandit.update(
-                        key=bandit_key,
-                        action=selected_npc_action,
-                        reward_01=bandit_reward
+                    )
+                    # Save every 10 updates
+                    arm = npc_action_bandit._get_arm(bandit_key, selected_npc_action)
+                    if arm["n"] % 10 == 0:
+                        npc_action_bandit.save()
                     )
                     
                     # Save periodically (every update for now)
