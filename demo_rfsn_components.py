@@ -262,24 +262,28 @@ def demo_integration_flow():
     
     print("Step 5: Learning Update")
     print(f"Reward: {reward}")
-    print(f"Updated statistics for {state}/{selected_action}")
-    stats = bandit.snapshot()[state][selected_action]
-    print(f"  Trials: {stats['n']}")
-    print(f"  Mean reward: {stats['value_sum']/stats['n']:.2f}")
-    print()
+        """Run all demonstrations."""
+        interactive = sys.stdin.isatty()
 
+        print()
+        print("╔" + "=" * 68 + "╗")
+        print("║" + " RFSN ORCHESTRATOR - COMPONENT DEMONSTRATION ".center(68) + "║")
+        print("╚" + "=" * 68 + "╝")
+        print()
 
-def main():
-    """Run all demonstrations."""
-    print()
-    print("╔" + "=" * 68 + "╗")
-    print("║" + " RFSN ORCHESTRATOR - COMPONENT DEMONSTRATION ".center(68) + "║")
-    print("╚" + "=" * 68 + "╝")
-    print()
-    
-    # Demo 1: Prompt template
-    demo_prompt_template()
-    input("Press Enter to continue to bandit learning demo...")
+        # Demo 1: Prompt template
+        demo_prompt_template()
+        if interactive:
+            input("Press Enter to continue to bandit learning demo...")
+        print()
+
+        # Demo 2: Bandit learning
+        demo_bandit_learning()
+        if interactive:
+            input("Press Enter to continue to integration flow demo...")
+        print()
+
+        # Demo 3: Complete integration
     print()
     
     # Demo 2: Bandit learning
