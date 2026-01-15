@@ -44,6 +44,7 @@ class RuntimeState:
     state_machine: Optional[Any] = None
     world_model: Optional[Any] = None
     action_scorer: Optional[Any] = None
+    npc_action_bandit: Optional[Any] = None
     hot_config: Optional[Any] = None
     
     def is_healthy(self) -> bool:
@@ -133,6 +134,7 @@ class Runtime:
                 observability=kwargs.get('observability', current.observability),
                 event_recorder=kwargs.get('event_recorder', current.event_recorder),
                 state_machine=kwargs.get('state_machine', current.state_machine),
+                npc_action_bandit=kwargs.get('npc_action_bandit', current.npc_action_bandit),
                 hot_config=kwargs.get('hot_config', current.hot_config),
             )
             self._state = new_state
