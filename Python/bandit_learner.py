@@ -291,9 +291,13 @@ class StateActionBandit:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
         os.replace(tmp_path, self.storage_path)
-
-    # ---------- helpers ----------
-
+try:
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, self.storage_path)
+except OSError as e:
+    # handle or log the error without raising
+    pass
     def _total_trials(self, state_id: str, actions: List[str]) -> int:
         """Compute total number of trials across all actions in a state.
         
