@@ -37,7 +37,11 @@ from hot_config import init_config, get_config
 from xvasynth_engine import XVASynthEngine
 
 # Import learning layer
-from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog, NPCActionBandit, BanditKey
+from learning import (
+    PolicyAdapter, RewardModel, Trainer, ActionMode, 
+    FeatureVector, RewardSignals, TurnLog,
+    NPCActionBandit, BanditKey
+)
 from learning.learning_contract import (
     LearningContract, LearningConstraints, StateSnapshot as LearningStateSnapshot,
     LearningUpdate, EvidenceType, WriteGateError

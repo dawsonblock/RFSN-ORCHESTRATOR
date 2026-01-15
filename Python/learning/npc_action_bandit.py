@@ -65,6 +65,11 @@ class NPCActionBandit:
     Thompson sampling bandit with Beta priors per (key, action).
     Rewards must be in [0, 1].
     """
+    
+    # Prior blending constants
+    PRIOR_BLEND_MIN = -0.05  # Min bump from scorer priors
+    PRIOR_BLEND_MAX = 0.05   # Max bump from scorer priors
+    PRIOR_SCALE = 20.0        # Scale factor to normalize scorer values into bump range
 
     def __init__(self, path: Optional[Path] = None, min_trials_before_exploit: int = 3):
         self.path = path or Path("data/learning/npc_action_bandit.json")
@@ -121,11 +126,11 @@ class NPCActionBandit:
             # if we have almost no data, keep it a bit exploratory
             sample = random.betavariate(alpha, beta)
 
-            # weak prior blending: normalize scorer prior into a small [-0.05, +0.05] bump
+            # weak prior blending: normalize scorer prior into a small bump
             bump = 0.0
             if priors and a in priors:
                 p = priors[a]
-                bump = max(-0.05, min(0.05, p / 20.0))
+                bump = max(self.PRIOR_BLEND_MIN, min(self.PRIOR_BLEND_MAX, p / self.PRIOR_SCALE))
 
             # discourage exploitation if no trials yet
             cold_start_penalty = 0.0

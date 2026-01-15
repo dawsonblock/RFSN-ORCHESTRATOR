@@ -392,15 +392,22 @@ EndFunction
 
 ### xVASynth Integration
 
-For voice synthesis, pipe orchestrator output to xVASynth:
+For voice synthesis, process orchestrator SSE output:
 
 ```bash
-# Orchestrator sentence → xVASynth → Audio playback
+# Example: Extract sentences from SSE stream and send to xVASynth
 curl -X POST http://localhost:8001/api/dialogue/stream \
-  -d '{"user_input":"Hello","npc_state":{...}}' \
-  | jq -r '.sentence' \
-  | xvasynth --voice skyrim_lydia --output audio.wav
+  -H "Content-Type: application/json" \
+  -d '{"user_input":"Hello","npc_state":{"npc_name":"Lydia","mood":"neutral","affinity":0.0,"relationship":"stranger","recent_sentiment":0.0,"combat_active":false,"quest_active":false,"trust_level":0.5,"fear_level":0.0}}' \
+  | grep '^data: ' \
+  | sed 's/^data: //' \
+  | jq -r 'select(.sentence != null) | .sentence' \
+  | while read -r sentence; do
+      echo "$sentence" | xvasynth --voice skyrim_lydia --output "audio_${RANDOM}.wav"
+    done
 ```
+
+**Note**: This is a simplified example. Production integration should use proper SSE parsing libraries.
 
 ---
 
