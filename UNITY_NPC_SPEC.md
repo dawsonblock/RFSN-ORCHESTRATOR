@@ -157,7 +157,7 @@ public class RfsnClient : MonoBehaviour
             var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             
             // Set timeout
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
             var response = await httpClient.PostAsync("/api/decide", content, cts.Token);
             
             response.EnsureSuccessStatusCode();
