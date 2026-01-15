@@ -131,8 +131,8 @@ class StateActionBandit:
         banned = set(self.cfg.banned_actions or [])
         actions = [a for a in candidate_actions if a not in banned]
         if not actions:
-            # If everything is banned, fall back to original list (caller should clamp anyway)
-            actions = list(candidate_actions)
+            # If all candidate actions are banned, there are no valid choices.
+            raise ValueError("All candidate actions are banned.")
 
         # Ensure stats exist
         st = self._db.setdefault(state_id, {})
