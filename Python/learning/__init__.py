@@ -20,6 +20,7 @@ from .learning_contract import (
     EvidenceType,
     WriteGateError
 )
+from .npc_action_bandit import NPCActionBandit, BanditKey
 
 __all__ = [
     'ActionMode',
@@ -34,5 +35,7 @@ __all__ = [
     'LearningUpdate',
     'StateSnapshot',
     'EvidenceType',
-    'WriteGateError'
+    'WriteGateError',
+    'NPCActionBandit',
+    'BanditKey'
 ]

@@ -37,7 +37,7 @@ from hot_config import init_config, get_config
 from xvasynth_engine import XVASynthEngine
 
 # Import learning layer
-from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog
+from learning import PolicyAdapter, RewardModel, Trainer, ActionMode, FeatureVector, RewardSignals, TurnLog, NPCActionBandit, BanditKey
 from learning.learning_contract import (
     LearningContract, LearningConstraints, StateSnapshot as LearningStateSnapshot,
     LearningUpdate, EvidenceType, WriteGateError
@@ -54,6 +54,7 @@ from world_model import (
     WorldModel, StateSnapshot, NPCAction, PlayerSignal
 )
 from action_scorer import ActionScorer, UtilityFunction
+from llm_action_prompts import render_action_block
 import re
 
 # Configuration
@@ -252,7 +253,12 @@ async def startup_event():
         )
     )
 
-    logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer, LearningContract, MemoryGovernance, IntentGate, StreamingPipeline, Observability, EventRecorder, StateMachine)")
+    # Initialize NPCActionBandit for behavioral learning
+    npc_action_bandit = NPCActionBandit(
+        path=Path(__file__).parent.parent / "data" / "learning" / "npc_action_bandit.json"
+    )
+
+    logger.info("Learning layer initialized (Policy Adapter, Reward Model, Trainer, LearningContract, MemoryGovernance, IntentGate, StreamingPipeline, Observability, EventRecorder, StateMachine, NPCActionBandit)")
     logger.info("World model initialized (retrieval-based, rule-based)")
     
     # Swap engines into RuntimeState atomically (Patch 1: atomic engine pointers)
@@ -271,7 +277,8 @@ async def startup_event():
         event_recorder=event_recorder,
         state_machine=state_machine,
         world_model=world_model,
-        action_scorer=action_scorer
+        action_scorer=action_scorer,
+        npc_action_bandit=npc_action_bandit
     ))
     logger.info("Runtime state initialized atomically")
 
@@ -556,6 +563,7 @@ async def stream_dialogue(request: DialogueRequest):
     # Generate and score action candidates
     selected_npc_action = None
     selected_action_score = None
+    bandit_key = None
     try:
         if action_scorer and world_model:
             # Score candidates directly (generates internally)
@@ -564,10 +572,40 @@ async def stream_dialogue(request: DialogueRequest):
                 player_signal
             )
 
-            # Select best action (already sorted)
+            # Select action using bandit (if available) or fallback to top scorer
             if action_scores:
-                selected_action_score = action_scores[0]
-                selected_npc_action = selected_action_score.action
+                # Build candidate set (top-K already scored)
+                TOP_K = 4
+                candidates = [s.action for s in action_scores[:TOP_K]]
+                
+                # Get npc_action_bandit from runtime
+                npc_action_bandit = runtime.get().npc_action_bandit
+                
+                # Forced actions bypass learning (single candidate means forced)
+                if len(candidates) == 1 or not npc_action_bandit:
+                    selected_npc_action = candidates[0]
+                    selected_action_score = action_scores[0]
+                else:
+                    # Use bandit to select from candidates
+                    bandit_key = BanditKey.from_state(
+                        current_state_snapshot,
+                        player_signal,
+                    ).to_str()
+                    
+                    priors = {s.action: s.total_score for s in action_scores[:TOP_K]}
+                    
+                    selected_npc_action = npc_action_bandit.select(
+                        key=bandit_key,
+                        candidates=candidates,
+                        priors=priors,
+                    )
+                    
+                    # Get the score for the selected action
+                    selected_action_score = next(
+                        (s for s in action_scores if s.action == selected_npc_action),
+                        action_scores[0]
+                    )
+                
                 logger.info(
                     f"World Model: Selected action {selected_npc_action.value} "
                     f"(score={selected_action_score.total_score:.2f}, "
@@ -599,10 +637,17 @@ async def stream_dialogue(request: DialogueRequest):
     if policy_adapter:
         system_prompt += f"\n\n{action_mode.prompt_injection}"
 
-    # Inject selected NPC action instruction
+    # Inject selected NPC action instruction using strict action control block
     if selected_npc_action:
-        action_instruction = _map_action_to_instruction(selected_npc_action)
-        system_prompt += f"\n\n{action_instruction}"
+        action_block = render_action_block(
+            npc_action=selected_npc_action,
+            npc_name=state.npc_name,
+            mood=current_state_snapshot.mood,
+            relationship=current_state_snapshot.relationship,
+            affinity=current_state_snapshot.affinity,
+            player_signal=player_signal.value,
+        )
+        system_prompt += f"\n\n{action_block}"
 
     full_prompt = f"System: {system_prompt}\n{history}\nPlayer: {request.user_input}\n{state.npc_name}:"
     
@@ -647,6 +692,16 @@ async def stream_dialogue(request: DialogueRequest):
             return filtered_text
         
         try:
+            # Emit metadata event first (before any content)
+            metadata_event = {
+                "type": "meta",
+                "npc_name": state.npc_name,
+                "npc_action": selected_npc_action.value if selected_npc_action else None,
+                "action_mode": action_mode.name if action_mode else None,
+                "player_signal": player_signal.value,
+            }
+            yield f"data: {json.dumps(metadata_event)}\n\n"
+            
             # Use snapshot values
             for chunk in streaming_engine.generate_streaming(full_prompt, max_tokens=snapshot_max_tokens, temperature=snapshot_temp):
                 
@@ -845,6 +900,46 @@ async def stream_dialogue(request: DialogueRequest):
                 logger.info(f"Learning: reward={reward:.2f}, mode={action_mode.name}")
             except Exception as e:
                 logger.error(f"Learning layer error (reward/update): {e}")
+        
+        # Update NPC Action Bandit with reward signal
+        if bandit_key and selected_npc_action and selected_action_score:
+            npc_action_bandit = runtime.get().npc_action_bandit
+            if npc_action_bandit:
+                try:
+                    # Compute bandit reward (bounded [0, 1])
+                    # Base signal from scorer (normalized via sigmoid)
+                    import math
+                    def sigmoid(x: float) -> float:
+                        return 1.0 / (1.0 + math.exp(-x))
+                    
+                    bandit_reward = sigmoid(selected_action_score.total_score)
+                    
+                    # Positive evidence: conversation continued
+                    conversation_continued = True  # We're processing another turn
+                    if conversation_continued:
+                        bandit_reward += 0.15
+                    
+                    # Negative evidence: output was blocked or empty
+                    output_blocked = not full_response or len(full_response.strip()) == 0
+                    if output_blocked:
+                        bandit_reward -= 0.4
+                    
+                    # Clamp to [0, 1]
+                    bandit_reward = max(0.0, min(1.0, bandit_reward))
+                    
+                    # Update bandit
+                    npc_action_bandit.update(
+                        key=bandit_key,
+                        action=selected_npc_action,
+                        reward_01=bandit_reward
+                    )
+                    
+                    # Save periodically (every update for now)
+                    npc_action_bandit.save()
+                    
+                    logger.info(f"Bandit updated: action={selected_npc_action.value}, reward={bandit_reward:.2f}")
+                except Exception as e:
+                    logger.error(f"Bandit update error: {e}")
         
         # Per-request Trace Log (Patch v8.9)
         trace_id = f"req_{int(start_time)}"
