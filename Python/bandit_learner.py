@@ -191,17 +191,14 @@ class StateActionBandit:
                 arm.a += p
                 arm.b += (1.0 - p)
 
-        self._save()
-
     def reset_state(self, state_id: str) -> None:
         """Reset all statistics for a given state.
-        
+    
         Args:
             state_id: State to reset
         """
         if state_id in self._db:
             del self._db[state_id]
-            self._save()
 
     def snapshot(self) -> Dict[str, Dict[str, dict]]:
         """Get a snapshot of all current statistics.
