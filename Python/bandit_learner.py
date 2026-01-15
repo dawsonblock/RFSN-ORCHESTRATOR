@@ -95,6 +95,10 @@ class StateActionBandit:
         """
         self.storage_path = storage_path
         self.cfg = config or BanditConfig()
+        mode = self.cfg.mode.lower()
+        if mode not in ("thompson", "ucb"):
+            raise ValueError(f"Unsupported mode: {self.cfg.mode}")
+        self.cfg.mode = mode
         self._db: Dict[str, Dict[str, ArmStats]] = {}
         self._load()
 
