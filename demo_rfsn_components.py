@@ -27,7 +27,15 @@ def load_prompt_template():
 
 def build_dialogue_prompt(template, **kwargs):
     """Build a dialogue prompt from the template with variable substitution."""
-    return template.format(**kwargs)
+    safe = {}
+    for k, v in kwargs.items():
+        if v is None:
+            safe[k] = ""
+        else:
+            s = str(v)
+            s = s.replace("{", "{{").replace("}", "}}")
+            safe[k] = s
+    return template.format(**safe)
 
 
 def demo_bandit_learning():
