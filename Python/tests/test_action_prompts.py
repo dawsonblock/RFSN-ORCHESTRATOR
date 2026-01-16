@@ -2,12 +2,6 @@
 Tests for action_prompts module.
 """
 import pytest
-import sys
-import os
-
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from prompting.action_prompts import build_action_subprompt
 from world_model import NPCAction, PlayerSignal, StateSnapshot
 
