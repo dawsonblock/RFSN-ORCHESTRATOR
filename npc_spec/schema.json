@@ -1,0 +1,346 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RFSN NPC Specification",
+  "description": "Complete specification for Unity/Skyrim NPC integration with RFSN Orchestrator",
+  "version": "1.0.0",
+  
+  "definitions": {
+    "StateVariables": {
+      "description": "Bounded state variables that define NPC internal state",
+      "type": "object",
+      "properties": {
+        "mood": {
+          "type": "string",
+          "enum": ["happy", "neutral", "sad", "angry", "fearful", "curious", "hostile", "friendly", "determined"],
+          "description": "Current emotional state"
+        },
+        "affinity": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "Relationship strength with player (-1.0 = enemy, 0.0 = neutral, +1.0 = ally)"
+        },
+        "relationship": {
+          "type": "string",
+          "enum": ["stranger", "acquaintance", "friend", "ally", "rival", "enemy"],
+          "description": "Categorical relationship level"
+        },
+        "trust_level": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Trust in player (0.0 = no trust, 1.0 = complete trust)"
+        },
+        "fear_level": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Fear of player or situation (0.0 = no fear, 1.0 = terrified)"
+        },
+        "recent_sentiment": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "Sentiment from last few interactions"
+        },
+        "combat_active": {
+          "type": "boolean",
+          "description": "Whether NPC is in combat mode"
+        },
+        "quest_active": {
+          "type": "boolean",
+          "description": "Whether NPC is involved in an active quest"
+        }
+      },
+      "required": ["mood", "affinity", "relationship", "recent_sentiment"]
+    },
+    
+    "PlayerSignal": {
+      "description": "Classified player input signal",
+      "type": "string",
+      "enum": [
+        "greet",
+        "farewell",
+        "agree",
+        "disagree",
+        "apologize",
+        "insult",
+        "compliment",
+        "threaten",
+        "request",
+        "offer",
+        "refuse",
+        "accept",
+        "attack",
+        "help",
+        "betray",
+        "ignore",
+        "question",
+        "command",
+        "flee"
+      ]
+    },
+    
+    "NPCAction": {
+      "description": "Discrete NPC action chosen by orchestrator",
+      "type": "string",
+      "enum": [
+        "greet",
+        "farewell",
+        "agree",
+        "disagree",
+        "apologize",
+        "insult",
+        "compliment",
+        "threaten",
+        "request",
+        "offer",
+        "refuse",
+        "accept",
+        "attack",
+        "defend",
+        "flee",
+        "help",
+        "betray",
+        "ignore",
+        "inquire",
+        "explain"
+      ]
+    },
+    
+    "TransitionRule": {
+      "description": "Authoritative state transition rule",
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/NPCAction"
+        },
+        "signal": {
+          "$ref": "#/definitions/PlayerSignal"
+        },
+        "affinity_delta": {
+          "type": "number",
+          "minimum": -0.3,
+          "maximum": 0.3,
+          "description": "Change to affinity (clamped to [-1.0, 1.0])"
+        },
+        "trust_delta": {
+          "type": "number",
+          "minimum": -0.3,
+          "maximum": 0.3,
+          "description": "Change to trust_level (clamped to [0.0, 1.0])"
+        },
+        "fear_delta": {
+          "type": "number",
+          "minimum": -0.3,
+          "maximum": 0.3,
+          "description": "Change to fear_level (clamped to [0.0, 1.0])"
+        },
+        "mood_change": {
+          "type": "string",
+          "description": "Optional mood transition"
+        },
+        "relationship_change": {
+          "type": "string",
+          "description": "Optional relationship tier change"
+        }
+      }
+    },
+    
+    "InputEvent": {
+      "description": "Event sent from game engine to orchestrator",
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": ["player_input", "game_event", "combat_start", "combat_end", "quest_update"],
+          "description": "Type of event"
+        },
+        "npc_id": {
+          "type": "string",
+          "description": "Unique identifier for NPC"
+        },
+        "player_text": {
+          "type": "string",
+          "description": "Player's spoken input (for player_input events)"
+        },
+        "context": {
+          "type": "object",
+          "description": "Additional context (location, nearby NPCs, inventory, etc.)"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Unix timestamp of event"
+        }
+      },
+      "required": ["event_type", "npc_id", "timestamp"]
+    },
+    
+    "OutputEvent": {
+      "description": "Event sent from orchestrator to game engine",
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": ["dialogue", "action", "state_change", "animation", "audio"],
+          "description": "Type of output event"
+        },
+        "npc_id": {
+          "type": "string",
+          "description": "Unique identifier for NPC"
+        },
+        "action": {
+          "$ref": "#/definitions/NPCAction",
+          "description": "Selected NPC action"
+        },
+        "dialogue_text": {
+          "type": "string",
+          "description": "Generated dialogue for NPC to speak"
+        },
+        "animation_trigger": {
+          "type": "string",
+          "description": "Animation to trigger (mapped from action)"
+        },
+        "audio_file": {
+          "type": "string",
+          "description": "Path to TTS audio file"
+        },
+        "state_after": {
+          "$ref": "#/definitions/StateVariables",
+          "description": "NPC state after transition"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional metadata (confidence, bandit_key, etc.)"
+        }
+      },
+      "required": ["event_type", "npc_id", "action"]
+    },
+    
+    "AnimationMapping": {
+      "description": "Mapping from NPCAction to animation triggers",
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "object",
+          "properties": {
+            "animation_name": {
+              "type": "string",
+              "description": "Animation controller trigger/state name"
+            },
+            "duration_hint": {
+              "type": "number",
+              "description": "Expected animation duration in seconds"
+            },
+            "interruptible": {
+              "type": "boolean",
+              "description": "Whether animation can be interrupted"
+            }
+          }
+        }
+      }
+    },
+    
+    "VoiceMapping": {
+      "description": "Voice/TTS configuration per NPC",
+      "type": "object",
+      "properties": {
+        "voice_id": {
+          "type": "string",
+          "description": "TTS voice identifier"
+        },
+        "pitch": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "description": "Voice pitch multiplier"
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "description": "Voice speed multiplier"
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Voice volume"
+        }
+      }
+    },
+    
+    "SaveBlob": {
+      "description": "Serialized NPC state for save/load",
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Schema version for migration"
+        },
+        "npc_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/StateVariables"
+        },
+        "memory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timestamp": {"type": "number"},
+              "player_signal": {"type": "string"},
+              "npc_action": {"type": "string"},
+              "outcome": {"type": "string"}
+            }
+          },
+          "description": "Conversation history"
+        },
+        "bandit_state": {
+          "type": "object",
+          "description": "Bandit learner state (if persisting per-NPC)"
+        }
+      },
+      "required": ["version", "npc_id", "state"]
+    }
+  },
+  
+  "examples": {
+    "input_event_example": {
+      "event_type": "player_input",
+      "npc_id": "lydia_001",
+      "player_text": "Can you help me carry this loot?",
+      "context": {
+        "location": "whiterun_inn",
+        "player_inventory_weight": 285,
+        "player_inventory_max": 300
+      },
+      "timestamp": 1705456789
+    },
+    
+    "output_event_example": {
+      "event_type": "dialogue",
+      "npc_id": "lydia_001",
+      "action": "accept",
+      "dialogue_text": "Of course. I am sworn to carry your burdens.",
+      "animation_trigger": "Accept_Nod",
+      "audio_file": "tts/lydia_001_12345.wav",
+      "state_after": {
+        "mood": "friendly",
+        "affinity": 0.6,
+        "relationship": "ally",
+        "recent_sentiment": 0.3,
+        "combat_active": false,
+        "quest_active": true,
+        "trust_level": 0.75,
+        "fear_level": 0.0
+      },
+      "metadata": {
+        "confidence": 0.92,
+        "bandit_key": "friendly|ally|pos|request|no_combat|quest",
+        "latency_ms": 234
+      }
+    }
+  }
+}
