@@ -321,6 +321,300 @@ The system includes a lightweight contextual bandit that learns optimal dialogue
 
 ---
 
+## 🎯 Running Episode Simulations
+
+### How to Run One NPC Through 100 Turns and Export Episode Data
+
+For testing, evaluation, or machine learning experiments, you can run extended NPC conversations and export the complete episode data.
+
+#### 1. Create an Episode Runner Script
+
+Create `Python/run_episode.py`:
+
+```python
+"""
+Run a multi-turn NPC episode and export structured logs.
+"""
+import asyncio
+import json
+import time
+from pathlib import Path
+from datetime import datetime
+
+from orchestrator import app
+from world_model import StateSnapshot, PlayerSignal, NPCAction
+from action_scorer import ActionScorer
+from learning.bandit_core import BanditCore
+
+
+async def run_episode(npc_id: str, num_turns: int = 100, output_file: str = None):
+    """
+    Run a simulated NPC episode with predefined player inputs.
+    
+    Args:
+        npc_id: Unique identifier for the NPC
+        num_turns: Number of conversation turns to simulate
+        output_file: Path to save episode.jsonl (defaults to data/episodes/{npc_id}_{timestamp}.jsonl)
+    """
+    # Initialize components
+    action_scorer = ActionScorer()
+    bandit = BanditCore(strategy="thompson_beta", seed=42)
+    
+    # Initialize NPC state
+    state = StateSnapshot(
+        mood="neutral",
+        affinity=0.0,
+        relationship="stranger",
+        recent_sentiment=0.0,
+        combat_active=False,
+        quest_active=False,
+        trust_level=0.5,
+        fear_level=0.0
+    )
+    
+    # Predefined player signals for simulation
+    player_signals = [
+        PlayerSignal.GREET,
+        PlayerSignal.QUESTION,
+        PlayerSignal.COMPLIMENT,
+        PlayerSignal.REQUEST,
+        PlayerSignal.AGREE,
+        PlayerSignal.DISAGREE,
+        PlayerSignal.INSULT,
+        PlayerSignal.APOLOGIZE,
+        PlayerSignal.THREATEN,
+        PlayerSignal.FAREWELL,
+    ]
+    
+    # Episode log
+    episode_data = []
+    
+    print(f"Starting episode: {npc_id} for {num_turns} turns")
+    print("=" * 60)
+    
+    for turn in range(num_turns):
+        # Select player signal (cycle through predefined signals)
+        player_signal = player_signals[turn % len(player_signals)]
+        
+        print(f"\nTurn {turn + 1}/{num_turns}")
+        print(f"Player Signal: {player_signal.value}")
+        print(f"State: mood={state.mood}, affinity={state.affinity:.2f}, rel={state.relationship}")
+        
+        # Generate and score candidates
+        candidates = action_scorer.propose_candidates(state, player_signal)
+        scored_candidates = [
+            (action, action_scorer.score_action(state, action, player_signal))
+            for action in candidates
+        ]
+        
+        # Select top-K
+        top_k = sorted(scored_candidates, key=lambda x: x[1].total_score, reverse=True)[:4]
+        top_actions = [action for action, _ in top_k]
+        
+        # Bandit selection
+        bandit_key = f"{state.mood}|{state.relationship}|{player_signal.value}"
+        priors = {action: score.total_score for action, score in top_k}
+        selected_action = bandit.select(bandit_key, [a.value for a in top_actions], priors)
+        selected_action_enum = NPCAction(selected_action)
+        
+        # Simulate reward (in real system, comes from player engagement)
+        # For simulation, use scorer confidence as proxy
+        selected_score = next(score for action, score in top_k if action == selected_action_enum)
+        reward = min(1.0, max(0.0, (selected_score.total_score / 10.0)))
+        
+        # Update bandit
+        bandit.update(bandit_key, selected_action, reward)
+        
+        # Log turn data
+        turn_data = {
+            "turn": turn + 1,
+            "timestamp": time.time(),
+            "player_signal": player_signal.value,
+            "state_before": state.to_dict(),
+            "candidates": [action.value for action in top_actions],
+            "scores": {action.value: score.total_score for action, score in top_k},
+            "bandit_key": bandit_key,
+            "selected_action": selected_action,
+            "reward": reward,
+            "state_after": None  # Will update after transition
+        }
+        
+        # Apply state transition (simplified)
+        # In real system, use state_machine.apply_transition()
+        if selected_action_enum == NPCAction.COMPLIMENT or player_signal == PlayerSignal.COMPLIMENT:
+            state.affinity = min(1.0, state.affinity + 0.05)
+        elif selected_action_enum == NPCAction.INSULT or player_signal == PlayerSignal.INSULT:
+            state.affinity = max(-1.0, state.affinity - 0.1)
+        elif selected_action_enum == NPCAction.THREATEN or player_signal == PlayerSignal.THREATEN:
+            state.fear_level = min(1.0, state.fear_level + 0.15)
+        
+        # Update relationship tier based on affinity
+        if state.affinity < -0.6:
+            state.relationship = "enemy"
+        elif state.affinity < -0.2:
+            state.relationship = "rival"
+        elif state.affinity < 0.2:
+            state.relationship = "acquaintance"
+        elif state.affinity < 0.6:
+            state.relationship = "friend"
+        else:
+            state.relationship = "ally"
+        
+        turn_data["state_after"] = state.to_dict()
+        episode_data.append(turn_data)
+        
+        print(f"Selected Action: {selected_action}")
+        print(f"Reward: {reward:.2f}")
+    
+    # Save episode data
+    if output_file is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"data/episodes/{npc_id}_{timestamp}.jsonl"
+    
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, "w") as f:
+        for turn_data in episode_data:
+            f.write(json.dumps(turn_data) + "\n")
+    
+    print("\n" + "=" * 60)
+    print(f"Episode complete! Saved to: {output_path}")
+    print(f"Final state: affinity={state.affinity:.2f}, relationship={state.relationship}")
+    
+    # Print summary statistics
+    total_reward = sum(t["reward"] for t in episode_data)
+    avg_reward = total_reward / len(episode_data)
+    print(f"Average reward: {avg_reward:.3f}")
+    
+    return episode_data
+
+
+if __name__ == "__main__":
+    asyncio.run(run_episode("lydia_001", num_turns=100))
+```
+
+#### 2. Run the Episode
+
+```bash
+cd Python
+python run_episode.py
+```
+
+#### 3. Analyze Episode Data
+
+The episode data is saved in JSONL format (one JSON object per line). Each line contains:
+
+```json
+{
+  "turn": 1,
+  "timestamp": 1705456789.123,
+  "player_signal": "greet",
+  "state_before": {"mood": "neutral", "affinity": 0.0, ...},
+  "candidates": ["greet", "inquire", "ignore", "help"],
+  "scores": {"greet": 8.5, "inquire": 6.2, ...},
+  "bandit_key": "neutral|stranger|greet",
+  "selected_action": "greet",
+  "reward": 0.85,
+  "state_after": {"mood": "friendly", "affinity": 0.05, ...}
+}
+```
+
+#### 4. Visualize Episode Results
+
+Create `Python/analyze_episode.py`:
+
+```python
+"""
+Analyze and visualize episode data.
+"""
+import json
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+def analyze_episode(episode_file: str):
+    """Load and analyze episode data."""
+    with open(episode_file, "r") as f:
+        episode = [json.loads(line) for line in f]
+    
+    turns = [t["turn"] for t in episode]
+    rewards = [t["reward"] for t in episode]
+    affinities = [t["state_after"]["affinity"] for t in episode]
+    
+    # Plot rewards over time
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(turns, rewards)
+    plt.xlabel("Turn")
+    plt.ylabel("Reward")
+    plt.title("Reward Over Time")
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(turns, affinities)
+    plt.xlabel("Turn")
+    plt.ylabel("Affinity")
+    plt.title("NPC Affinity Over Time")
+    plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(episode_file.replace(".jsonl", "_analysis.png"))
+    print(f"Saved analysis plot: {episode_file.replace('.jsonl', '_analysis.png')}")
+    
+    # Print action distribution
+    actions = [t["selected_action"] for t in episode]
+    action_counts = {}
+    for action in actions:
+        action_counts[action] = action_counts.get(action, 0) + 1
+    
+    print("\nAction Distribution:")
+    for action, count in sorted(action_counts.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {action}: {count} ({count/len(episode)*100:.1f}%)")
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        analyze_episode(sys.argv[1])
+    else:
+        print("Usage: python analyze_episode.py <episode.jsonl>")
+```
+
+Run analysis:
+
+```bash
+python analyze_episode.py data/episodes/lydia_001_20240116_123456.jsonl
+```
+
+#### 5. Integration Testing with Real Orchestrator
+
+For full end-to-end testing with the live orchestrator:
+
+```bash
+# Start orchestrator
+python launch_optimized.py
+
+# In another terminal, run episode via HTTP API
+python -c "
+import requests
+import json
+
+for i in range(100):
+    response = requests.post(
+        'http://localhost:8000/api/chat',
+        json={
+            'message': f'Turn {i+1} test message',
+            'npc_id': 'test_npc',
+            'context': {}
+        }
+    )
+    print(f'Turn {i+1}: {response.status_code}')
+"
+```
+
+---
+
 ## 📊 Monitoring
 
 ### Dashboard Features
