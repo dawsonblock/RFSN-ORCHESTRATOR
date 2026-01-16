@@ -159,12 +159,15 @@ class NPCActionBandit:
             json.dump({"arms": self._arms}, f, indent=2, sort_keys=True)
 
     def load(self) -> None:
+        if not self.path.exists():
+            self._arms = {}
+            return
+        
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
             self._arms = data.get("arms", {}) or {}
         except Exception as e:
             print(f"Corrupted bandit data at {self.path}: {e}")
-            self._arms = {}
-                data = json.load(f)
-            self._arms = data.get("arms", {}) or {}
-        except Exception:
             # if corrupted, start fresh (better than crashing prod)
             self._arms = {}

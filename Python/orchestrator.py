@@ -700,10 +700,8 @@ async def stream_dialogue(request: DialogueRequest):
             metadata_event = {
                 "player_signal": player_signal.value,
                 "bandit_key": bandit_key,
-            }
                 "npc_action": selected_npc_action.value if selected_npc_action else None,
                 "action_mode": action_mode.name if action_mode else None,
-                "player_signal": player_signal.value,
             }
             yield f"data: {json.dumps(metadata_event)}\n\n"
             
@@ -933,12 +931,7 @@ async def stream_dialogue(request: DialogueRequest):
                     bandit_reward = max(0.0, min(1.0, bandit_reward))
                     
                     # Update bandit
-                    )
-                    # Save every 10 updates
-                    arm = npc_action_bandit._get_arm(bandit_key, selected_npc_action)
-                    if arm["n"] % 10 == 0:
-                        npc_action_bandit.save()
-                    )
+                    npc_action_bandit.update(bandit_key, selected_npc_action, bandit_reward)
                     
                     # Save periodically (every update for now)
                     npc_action_bandit.save()
