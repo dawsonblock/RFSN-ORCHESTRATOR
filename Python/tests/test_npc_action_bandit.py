@@ -130,7 +130,7 @@ class TestNPCActionBandit:
         
         arm_after = bandit._get_arm(key, action)
         assert arm_after["alpha"] > alpha_before
-        assert arm_after["beta"] < beta_before  # Beta increases by (1 - reward)
+        assert arm_after["beta"] > beta_before  # Beta increases by (1 - reward)
         assert arm_after["n"] == 1.0
     
     def test_update_clamps_reward(self, temp_path):
